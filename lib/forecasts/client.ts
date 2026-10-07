@@ -53,5 +53,5 @@ export async function saveRows(forecastId: number, versionId: number, calc: Awai
     onStep(`Сохранение строк: ${Math.min(i + CHUNK, rows.length)} из ${rows.length}…`);
     await api(`/api/forecasts/${forecastId}/items`, "POST", { versionId, rows: rows.slice(i, i + CHUNK).map(slim) });
   }
-  await api(`/api/forecasts/${forecastId}/finalize`, "POST", { versionId, gpzRows: calc.gpzRows, excluded: calc.result.excluded.length });
+  await api(`/api/forecasts/${forecastId}/finalize`, "POST", { versionId, gpzRows: calc.gpzRows, excluded: calc.result.excluded.length, excludedRows: calc.result.excluded });
 }

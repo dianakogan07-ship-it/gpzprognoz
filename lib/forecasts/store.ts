@@ -1,6 +1,6 @@
 import { ensureDemo, loadReference, sql } from "../db";
 import type { Reference } from "../types";
-import { aggregateForecast, groupKey, type ContractPoint, type ForecastRow } from "../forecast";
+import { aggregateForecast, groupKey, type ContractPoint, type ExcludedRow, type ForecastRow } from "../forecast";
 import {
   CARD_COLORS, canTransition, fingerprint, hasNewIndices, indexSnapshot, isFrozen, mape, refFromSnapshot, statsOf,
   type ForecastStatus, type SnapshotIndex, type StoredItem, type VersionStats,
@@ -114,7 +114,8 @@ export async function appendItems(forecastId: number, versionId: number, rows: F
   await insertItems(versionId, rows);
 }
 
-export async function finalizeUpload(forecastId: number, versionId: number, info: { gpzRows: number; excluded: number; author: string }) {
+export async function finalizeUpload(forecastId: number, versionId: number, info: { gpzRows: number; excluded: number; excludedRows?: ExcludedRow[]; author: string }) {
+  if (info.excludedRows) await sql().query("UPDATE forecast_versions SET excluded_rows = $1 WHERE id = $2", [JSON.stringify(info.excludedRows.slice(0, 5000)), versionId]);
   const stats = await refreshStats(versionId, info.excluded);
   await log({ forecastId, versionId, type: "upload", newValue: `строк ГПЗ: ${info.gpzRows}, не вошли: ${info.excluded}`, author: info.author });
   await log({ forecastId, versionId, type: "calc", newValue: `позиций: ${stats.items}, договоров: ${stats.contracts}`, author: info.author });
@@ -125,15 +126,17 @@ export async function getForecast(id: number, versionId?: number) {
   const db = sql();
   const [f] = await db.query("SELECT * FROM forecasts WHERE id = $1", [id]);
   if (!f) throw new Error("Прогноз не найден");
-  const versions = await db.query("SELECT id, number, status, comment, stats, author, created_at, index_snapshot FROM forecast_versions WHERE forecast_id = $1 ORDER BY number DESC", [id]);
+  const versions = await db.query("SELECT id, number, status, comment, stats, author, created_at, index_snapshot, excluded_rows FROM forecast_versions WHERE forecast_id = $1 ORDER BY number DESC", [id]);
   const ref = await loadReference();
   const cur = versions.find((v) => v.id === f.current_version_id);
   const shown = versions.find((v) => v.id === versionId) ?? cur;
   return {
     ...f,
-    versions: versions.map((v) => ({ ...v, index_snapshot: undefined, indices: (v.index_snapshot as SnapshotIndex[]).length })),
+    versions: versions.map((v) => ({ ...v, index_snapshot: undefined, excluded_rows: undefined, indices: (v.index_snapshot as SnapshotIndex[]).length })),
     /** Индексы показываемой версии */
     snapshot: (shown?.index_snapshot ?? []) as SnapshotIndex[],
+    /** Строки файлов, не вошедшие в расчёт показываемой версии */
+    excluded: (shown?.excluded_rows ?? []) as ExcludedRow[],
     newIndices: f.status !== "archived" && cur != null && hasNewIndices(indexSnapshot(ref, f.year, f.base_year), cur.index_snapshot),
   };
 }
@@ -158,10 +161,10 @@ export async function newVersion(forecastId: number, comment: string, author: st
   const db = sql();
   const f = await forecastOf(forecastId);
   if (f.status === "archived") throw new Error("Прогноз в архиве");
-  const [prev] = await db.query("SELECT index_snapshot, index_fingerprint, stats FROM forecast_versions WHERE id = $1", [f.current_version_id]);
+  const [prev] = await db.query("SELECT index_snapshot, index_fingerprint, stats, excluded_rows FROM forecast_versions WHERE id = $1", [f.current_version_id]);
   const [v] = await db.query(
-    "INSERT INTO forecast_versions (forecast_id, number, comment, index_snapshot, index_fingerprint, stats, author) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, number",
-    [forecastId, f.number + 1, comment, JSON.stringify(snap ?? prev.index_snapshot), snap ? fingerprint(snap) : prev.index_fingerprint, JSON.stringify(prev.stats), author],
+    "INSERT INTO forecast_versions (forecast_id, number, comment, index_snapshot, index_fingerprint, stats, excluded_rows, author) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, number",
+    [forecastId, f.number + 1, comment, JSON.stringify(snap ?? prev.index_snapshot), snap ? fingerprint(snap) : prev.index_fingerprint, JSON.stringify(prev.stats), JSON.stringify(prev.excluded_rows ?? []), author],
   );
   if (rows) await insertItems(v.id, rows);
   else {

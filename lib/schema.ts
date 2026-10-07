@@ -136,5 +136,7 @@ CREATE TABLE IF NOT EXISTS actuals (
 );
 CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key);
 -- Цвет карточки, выбранный пользователем (пусто — по статусу)
-ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS color TEXT
+ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS color TEXT;
+-- Строки файлов, не вошедшие в расчёт версии
+ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS excluded_rows JSONB NOT NULL DEFAULT '[]'
 `;

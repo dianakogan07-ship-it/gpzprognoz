@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { IconDownload } from "./Icons";
+import { IconDownload, IconEdit } from "./Icons";
 import { Chip, MultiSelect } from "./MultiSelect";
 import {
   CONTRACTS_LABEL, EMPTY_FILTERS, FLAG_LABEL, REASON_TEXT, REPEAT_LABEL, SOURCE_LABEL, STATUS_LABEL,
@@ -67,14 +67,14 @@ export function Steps({ v, baseYear, sources }: { v: ViewRow; baseYear: number; 
 const Arrow = () => <span className="mx-1.5 text-slate-400">→</span>;
 const fmtNum = (n: number) => n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
 
-function SortTh({ k, f, set, children, right }: { k: SortKey; f: Filters; set: (p: Partial<Filters>) => void; children: React.ReactNode; right?: boolean }) {
+function SortTh({ k, f, set, children, right, extra }: { k: SortKey; f: Filters; set: (p: Partial<Filters>) => void; children: React.ReactNode; right?: boolean; extra?: ReactNode }) {
   const active = f.sort === k;
   return (
     <th className={right ? "text-right" : ""}>
       <button className={`inline-flex items-center gap-1 uppercase hover:text-slate-800 ${active ? "text-brand" : ""}`}
         onClick={() => set(active ? (f.dir === "asc" ? { dir: "desc" } : { sort: null, dir: "asc" }) : { sort: k, dir: k === "subject" || k === "region" ? "asc" : "desc" })}>
         {children}<span className="text-[10px]">{active ? (f.dir === "asc" ? "▲" : "▼") : "↕"}</span>
-      </button>
+      </button>{extra}
     </th>
   );
 }
@@ -112,14 +112,15 @@ export function useForecastFilters() {
 }
 export type ForecastFilters = ReturnType<typeof useForecastFilters>;
 
-/** Таблица позиций прогноза: подсказка, фильтры, сортировка, раскрытие строки, выгрузка */
-export function ForecastTable({ view, filters, baseYear, sources, onExport, rowActions, rowDetails, showMeta }: {
+/** Таблица позиций прогноза: фильтры, сортировка, раскрытие строки, выгрузка текущей выборки */
+export function ForecastTable({ view, filters, baseYear, targetYear, sources, onExport, onEdit, rowDetails, showMeta }: {
   view: ViewRow[];
   filters: ForecastFilters;
   baseYear: number;
+  targetYear: number;
   sources: Source[];
-  onExport: (rows: ViewRow[], all: boolean) => void;
-  rowActions?: (v: ViewRow) => ReactNode;
+  onExport: (rows: ViewRow[]) => void;
+  onEdit?: (v: ViewRow) => void;
   rowDetails?: (v: ViewRow) => ReactNode;
   /** Сохранённый прогноз: фильтры по отметкам проверки и правкам */
   showMeta?: boolean;
@@ -127,10 +128,10 @@ export function ForecastTable({ view, filters, baseYear, sources, onExport, rowA
   const { f, set, qInput, setQInput, gMin, setGMin, gMax, setGMax, resetAll } = filters;
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [limit, setLimit] = useState(PAGE);
-  const [exportAll, setExportAll] = useState(false);
+  const [more, setMore] = useState(false);
   useEffect(() => setLimit(PAGE), [f]);
   const filtered = useMemo(() => sortRows(filterRows(view, f), f.sort, f.dir), [view, f]);
-  const hint = useMemo(() => actionHint(view), [view]);
+  const hint = useMemo(() => { const h = actionHint(view); return h && h.reason !== "not_december" ? h : null; }, [view]);
   const counts = useMemo(() => {
     const status: Record<Status, number> = { reliable: 0, check: 0, lowdata: 0 };
     const cat = new Map<string, number>(), reg = new Map<string, { label: string; n: number }>(), method = new Map<string, number>();
@@ -161,9 +162,12 @@ export function ForecastTable({ view, filters, baseYear, sources, onExport, rowA
     ...f.repeat.map((s) => ({ key: `p${s}`, label: REPEAT_LABEL[s], remove: () => set({ repeat: f.repeat.filter((x) => x !== s) }) })),
     ...f.flags.map((s) => ({ key: `f${s}`, label: FLAG_LABEL[s], remove: () => set({ flags: f.flags.filter((x) => x !== s) }) })),
   ];
+  // Сколько фильтров включено в «Ещё фильтры»
+  const moreCount = f.category.length + f.method.length + f.source.length + f.contracts.length + f.repeat.length + f.flags.length
+    + (f.okpd ? 1 : 0) + (f.growthMin != null || f.growthMax != null ? 1 : 0);
   const toggleRow = (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const exportExcel = () => onExport(exportAll ? view : filtered, exportAll);
   const hasMethods = counts.method.size > 1 || !counts.method.has("");
+  const cols = onEdit ? 8 : 7;
 
   return (
     <>
@@ -177,58 +181,65 @@ export function ForecastTable({ view, filters, baseYear, sources, onExport, rowA
             {/* Фильтры */}
             <div className="flex flex-wrap items-center gap-2">
               <input className="inp w-72 py-1.5" placeholder="Поиск по предмету или коду ОКПД2" value={qInput} onChange={(e) => setQInput(e.target.value)} />
-              <MultiSelect label="Статус" value={f.status} onChange={(v) => set({ status: v as Status[] })}
-                options={(Object.keys(STATUS_LABEL) as Status[]).map((s) => ({ value: s, label: STATUS_LABEL[s], count: counts.status[s] }))} />
-              <MultiSelect label="Категория" value={f.category} onChange={(category) => set({ category })}
-                options={[...counts.cat.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Без категории", count: n }))} />
-              {hasMethods && <MultiSelect label="Способ закупки" value={f.method} onChange={(method) => set({ method })}
-                options={[...counts.method.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Не указан", count: n }))} />}
               <MultiSelect label="Регион" searchable value={f.region} onChange={(region) => set({ region })}
                 options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
-              <input className="inp w-32 py-1.5" placeholder="Код ОКПД2" title="Начало кода ОКПД2, например 28 или 09.10" value={f.okpd} onChange={(e) => set({ okpd: e.target.value })} />
-              <MultiSelect label="Источник индекса" value={f.source} onChange={(v) => set({ source: v as SourceKind[] })}
-                options={(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => ({ value: s, label: SOURCE_LABEL[s] }))} />
-              <MultiSelect label="Договоров" value={f.contracts} onChange={(v) => set({ contracts: v as ContractsBucket[] })}
-                options={(Object.keys(CONTRACTS_LABEL) as ContractsBucket[]).map((s) => ({ value: s, label: CONTRACTS_LABEL[s] }))} />
-              <MultiSelect label="Повторяемость" value={f.repeat} onChange={(v) => set({ repeat: v as Repeat[] })}
-                options={(Object.keys(REPEAT_LABEL) as Repeat[]).map((s) => ({ value: s, label: REPEAT_LABEL[s] }))} />
-              <MultiSelect label="Отметки" value={f.flags} onChange={(v) => set({ flags: v as Flag[] })}
-                options={(Object.keys(FLAG_LABEL) as Flag[]).filter((x) => showMeta || x === "review").map((s) => ({ value: s, label: FLAG_LABEL[s] }))} />
-              <span className="inline-flex items-center gap-1 text-sm text-slate-600">Рост, %
-                <input className="inp w-16 py-1.5" inputMode="decimal" placeholder="от" value={gMin} onChange={(e) => { setGMin(e.target.value); set({ growthMin: numOrNull(e.target.value) }); }} />
-                <input className="inp w-16 py-1.5" inputMode="decimal" placeholder="до" value={gMax} onChange={(e) => { setGMax(e.target.value); set({ growthMax: numOrNull(e.target.value) }); }} />
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {chips.map((c) => <Chip key={c.key} onRemove={c.remove}>{c.label}</Chip>)}
-              {chips.length > 0 && <button className="text-sm text-slate-500 hover:text-slate-900 hover:underline" onClick={resetAll}>Сбросить всё</button>}
+              <MultiSelect label="Статус" value={f.status} onChange={(v) => set({ status: v as Status[] })}
+                options={(Object.keys(STATUS_LABEL) as Status[]).map((s) => ({ value: s, label: STATUS_LABEL[s], count: counts.status[s] }))} />
+              <button type="button" aria-expanded={more} onClick={() => setMore(!more)}
+                className={`rounded-lg border px-3 py-1.5 text-sm ${more || moreCount ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
+                Ещё фильтры{moreCount ? ` (${moreCount})` : ""} <span className={`inline-block transition ${more ? "rotate-180" : ""}`}>▾</span>
+              </button>
               <span className="ml-auto text-sm text-slate-600">Показано <b>{filtered.length}</b> из {view.length}</span>
-              <select className="inp w-auto max-w-full py-1.5" value={exportAll ? "all" : "filtered"} onChange={(e) => setExportAll(e.target.value === "all")} aria-label="Что выгрузить">
-                <option value="filtered">Выгрузить отфильтрованные ({filtered.length})</option>
-                <option value="all">Выгрузить все ({view.length})</option>
-              </select>
-              <button className="btn-sec" onClick={exportExcel}><IconDownload />Скачать в Excel</button>
+              <button className="btn-sec" title="Выгрузить позиции, которые сейчас в таблице" onClick={() => onExport(filtered)}><IconDownload />Excel</button>
             </div>
+            <div className={`grid transition-all duration-200 ${more ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
+              <div className={more ? "" : "overflow-hidden"}>
+                <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <MultiSelect label="Категория" value={f.category} onChange={(category) => set({ category })}
+                    options={[...counts.cat.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Без категории", count: n }))} />
+                  {hasMethods && <MultiSelect label="Способ закупки" value={f.method} onChange={(method) => set({ method })}
+                    options={[...counts.method.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Не указан", count: n }))} />}
+                  <input className="inp w-32 py-1.5" placeholder="Код ОКПД2" title="Начало кода ОКПД2, например 28 или 09.10" value={f.okpd} onChange={(e) => set({ okpd: e.target.value })} />
+                  <MultiSelect label="Источник индекса" value={f.source} onChange={(v) => set({ source: v as SourceKind[] })}
+                    options={(Object.keys(SOURCE_LABEL) as SourceKind[]).map((s) => ({ value: s, label: SOURCE_LABEL[s] }))} />
+                  <MultiSelect label="Договоров" value={f.contracts} onChange={(v) => set({ contracts: v as ContractsBucket[] })}
+                    options={(Object.keys(CONTRACTS_LABEL) as ContractsBucket[]).map((s) => ({ value: s, label: CONTRACTS_LABEL[s] }))} />
+                  <MultiSelect label="Повторяемость" value={f.repeat} onChange={(v) => set({ repeat: v as Repeat[] })}
+                    options={(Object.keys(REPEAT_LABEL) as Repeat[]).map((s) => ({ value: s, label: REPEAT_LABEL[s] }))} />
+                  <MultiSelect label="Отметки" value={f.flags} onChange={(v) => set({ flags: v as Flag[] })}
+                    options={(Object.keys(FLAG_LABEL) as Flag[]).filter((x) => showMeta || x === "review").map((s) => ({ value: s, label: FLAG_LABEL[s] }))} />
+                  <span className="inline-flex items-center gap-1 text-sm text-slate-600">Рост, %
+                    <input className="inp w-16 py-1.5" inputMode="decimal" placeholder="от" value={gMin} onChange={(e) => { setGMin(e.target.value); set({ growthMin: numOrNull(e.target.value) }); }} />
+                    <input className="inp w-16 py-1.5" inputMode="decimal" placeholder="до" value={gMax} onChange={(e) => { setGMax(e.target.value); set({ growthMax: numOrNull(e.target.value) }); }} />
+                  </span>
+                </div>
+              </div>
+            </div>
+            {chips.length > 0 && (
+              <div className="flex flex-wrap items-center gap-2">
+                {chips.map((c) => <Chip key={c.key} onRemove={c.remove}>{c.label}</Chip>)}
+                <button className="text-sm text-slate-500 hover:text-slate-900 hover:underline" onClick={resetAll}>Сбросить всё</button>
+              </div>
+            )}
 
             {/* Таблица */}
-            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[760px]">
-              <colgroup><col className="w-8" /><col /><col className="w-44" /><col className="w-16" /><col className="w-36" /><col className="w-24" /><col className="w-36" /><col className="w-32" />{rowActions && <col className="w-28" />}</colgroup>
+            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[680px]">
+              <colgroup><col className="w-8" /><col /><col className="w-44" /><col className="w-16" /><col className="w-36" /><col className="w-40" /><col className="w-10" />{onEdit && <col className="w-12" />}</colgroup>
               <thead>
                 <tr>
                   <th />
                   <SortTh k="subject" f={f} set={set}>Предмет</SortTh>
                   <SortTh k="region" f={f} set={set}>Регион</SortTh>
                   <th>Ед.</th>
-                  <SortTh k="price" f={f} set={set} right>Цена {baseYear}</SortTh>
-                  <SortTh k="growth" f={f} set={set} right>Рост</SortTh>
-                  <SortTh k="forecast" f={f} set={set} right>Прогноз {baseYear + 1}</SortTh>
-                  <th>Статус</th>
-                  {rowActions && <th />}
+                  <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
+                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
+                  <th><span className="sr-only">Статус</span></th>
+                  {onEdit && <th />}
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={9} className="py-10 text-center text-slate-500">
+                  <tr><td colSpan={cols} className="py-10 text-center text-slate-500">
                     Нет позиций по выбранным фильтрам. <button className="text-brand hover:underline" onClick={resetAll}>Сбросить всё</button>
                   </td></tr>
                 )}
@@ -236,29 +247,33 @@ export function ForecastTable({ view, filters, baseYear, sources, onExport, rowA
                   const r = v.row, open = expanded.has(v.id);
                   return (
                     <Fragment key={v.id}>
-                      <tr className={`cursor-pointer ${open ? "bg-brand-light/40" : ""}`} onClick={() => toggleRow(v.id)}>
+                      <tr className={`group cursor-pointer ${open ? "bg-brand-light/40" : ""}`} onClick={() => toggleRow(v.id)}>
                         <td className="text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
-                        <td className="break-words">
-                          <div className="text-slate-900">{r.subject}</div>
-                          <div className="text-xs text-slate-400">{r.okpd2}{r.category ? ` · ${r.category}` : ""}</div>
-                        </td>
+                        <td className="break-words text-slate-900">{r.subject}</td>
                         <td className="break-words text-slate-700">{r.regionName ?? r.region ?? "—"}</td>
                         <td className="text-slate-700">{r.unitLabel}</td>
+                        <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
                         <td className="text-right">
-                          <div className="whitespace-nowrap">{fmtRub(r.basePrice)}</div>
-                          <div className="text-xs text-slate-400">по {r.contracts} {plural(r.contracts, "договору", "договорам", "договорам")}</div>
+                          <div className="whitespace-nowrap text-base font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</div>
+                          <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
                         </td>
-                        <td className={`whitespace-nowrap text-right ${v.growth < 0 ? "text-red-700" : "text-slate-700"}`}>{fmtGrowth(v.growth)}</td>
-                        <td className="whitespace-nowrap text-right text-base font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</td>
-                        <td>
-                          <StatusPill v={v} hidden={hint?.reason ?? null} />
-                          {v.meta?.needsReview && <div className={`mt-1 text-xs ${v.meta.reviewed ? "text-emerald-700" : "text-amber-700"}`}>{v.meta.reviewed ? "✓ проверено" : "согласовать"}</div>}
-                          {v.meta?.edited && <div className="mt-0.5 text-xs text-brand">есть правки</div>}
-                        </td>
-                        {rowActions && <td className="text-right" onClick={(e) => e.stopPropagation()}>{rowActions(v)}</td>}
+                        <td className="text-center"><StatusDot v={v} hidden={hint?.reason ?? null} /></td>
+                        {onEdit && (
+                          <td className="text-right" onClick={(e) => e.stopPropagation()}>
+                            <button type="button" title="Изменить" aria-label="Изменить" onClick={() => onEdit(v)}
+                              className="rounded-lg p-1.5 text-slate-500 opacity-0 transition hover:bg-slate-100 hover:text-brand focus:opacity-100 group-hover:opacity-100">
+                              <IconEdit width={16} height={16} />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                       {open && (
-                        <tr className="bg-brand-light/40"><td /><td colSpan={rowActions ? 8 : 7} className="pb-4"><Steps v={v} baseYear={baseYear} sources={sources} />{rowDetails?.(v)}</td></tr>
+                        <tr className="bg-brand-light/40"><td /><td colSpan={cols - 1} className="pb-4">
+                          <p className="mb-2 text-xs text-slate-500">
+                            ОКПД2 {r.okpd2}{r.category ? ` · ${r.category}` : ""} · по {r.contracts} {plural(r.contracts, "договору", "договорам", "договорам")}
+                          </p>
+                          <Steps v={v} baseYear={baseYear} sources={sources} />{rowDetails?.(v)}
+                        </td></tr>
                       )}
                     </Fragment>
                   );
@@ -270,6 +285,38 @@ export function ForecastTable({ view, filters, baseYear, sources, onExport, rowA
             )}
       </div>
     </>
+  );
+}
+
+const DOT: Record<Status, string> = { reliable: "bg-emerald-500", check: "bg-amber-500", lowdata: "bg-slate-400" };
+
+/** Статус строки — цветная точка, подробности во всплывающей подсказке */
+function StatusDot({ v, hidden }: { v: ViewRow; hidden: ReasonCode | null }) {
+  const reasons = v.reasons.filter((r) => r !== hidden);
+  const lines = [
+    STATUS_LABEL[v.status],
+    ...(reasons.length ? reasons.map((r) => `• ${REASON_TEXT[r]}`) : ["Отраслевой утверждённый индекс, не меньше трёх договоров"]),
+    ...(v.meta?.needsReview ? [v.meta.reviewed ? "✓ Проверено" : "Нужно согласовать"] : []),
+    ...(v.meta?.edited ? ["Есть ручные правки"] : []),
+  ];
+  return (
+    <span title={lines.join("\n")} aria-label={STATUS_LABEL[v.status]} className="relative inline-flex cursor-help p-1">
+      <span className={`h-2.5 w-2.5 rounded-full ${DOT[v.status]}`} />
+      {v.meta?.edited && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-brand" />}
+    </span>
+  );
+}
+
+/** Подсказка у колонки цены базового года */
+function PriceInfo() {
+  return (
+    <span className="group/info relative ml-1 inline-flex align-middle normal-case" onClick={(e) => e.stopPropagation()}>
+      <button type="button" aria-label="Пояснение к цене" className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-semibold leading-none text-slate-500 hover:border-brand hover:text-brand">i</button>
+      <span className="invisible absolute right-0 top-full z-20 mt-1 w-60 rounded-lg border border-slate-200 bg-white p-3 text-left text-xs font-normal tracking-normal text-slate-700 opacity-0 shadow-lg transition group-hover/info:visible group-hover/info:opacity-100 group-focus-within/info:visible group-focus-within/info:opacity-100">
+        Цены из договоров разных месяцев. Для точности уточните индексы.{" "}
+        <Link href="/indices" className="text-brand hover:underline">Индексы</Link>
+      </span>
+    </span>
   );
 }
 
