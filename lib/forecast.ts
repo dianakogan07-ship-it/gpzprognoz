@@ -1,5 +1,5 @@
 import type { GpzRow, ReportRow } from "./parse";
-import type { PriceIndex, Reference } from "./types";
+import { isActiveIndex, type PriceIndex, type Reference } from "./types";
 
 export interface ForecastOptions { baseYear: number; targetYear: number }
 
@@ -104,9 +104,10 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     if (r.procId && !byProc.has(r.procId)) byProc.set(r.procId, r);
   }
   const sourceByCode = new Map(ref.sources.map((s) => [s.code, s]));
-  const toDec = ref.indices.filter((i) => i.kind === "to_december" && i.year === opt.baseYear);
-  const fc = ref.indices.filter((i) => i.kind === "forecast" && i.year === opt.targetYear);
-  const cpi = ref.indices.find((i) => i.kind === "cpi" && i.year === opt.targetYear) ?? null;
+  const active = ref.indices.filter(isActiveIndex);
+  const toDec = active.filter((i) => i.kind === "to_december" && i.year === opt.baseYear);
+  const fc = active.filter((i) => i.kind === "forecast" && i.year === opt.targetYear);
+  const cpi = active.find((i) => i.kind === "cpi" && i.year === opt.targetYear) ?? null;
   const knownWs = new Set(ref.ws.map((w) => w.code));
   const newWs = new Set<string>();
 

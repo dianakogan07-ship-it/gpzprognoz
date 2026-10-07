@@ -41,4 +41,17 @@ CREATE TABLE IF NOT EXISTS price_indices (
   approved BOOLEAN NOT NULL DEFAULT FALSE,
   note TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS price_indices_uniq ON price_indices (kind, COALESCE(key, ''), year, COALESCE(month, 0));
+-- Версии индексов и сведения об источнике (загрузка прогноза МЭР)
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS raw_line TEXT;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS doc_title TEXT;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS doc_date TEXT;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS doc_page TEXT;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS indicator TEXT;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS ref_deflator NUMERIC(8, 5);
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS pending_of INT REFERENCES price_indices(id) ON DELETE CASCADE;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS superseded_at TIMESTAMPTZ;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS change_note TEXT;
+ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS loaded_at TIMESTAMPTZ DEFAULT now();
+DROP INDEX IF EXISTS price_indices_uniq;
+CREATE UNIQUE INDEX IF NOT EXISTS price_indices_active_uniq ON price_indices (kind, COALESCE(key, ''), year, COALESCE(month, 0)) WHERE pending_of IS NULL AND superseded_at IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS price_indices_pending_uniq ON price_indices (pending_of) WHERE pending_of IS NOT NULL;

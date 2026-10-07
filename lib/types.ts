@@ -21,7 +21,27 @@ export interface PriceIndex {
   source_code: string | null;
   approved: boolean;
   note: string | null;
+  /** Исходная строка документа, из которой взято значение */
+  raw_line?: string | null;
+  doc_title?: string | null;
+  doc_date?: string | null;
+  /** Страница PDF или лист Excel */
+  doc_page?: string | null;
+  /** icp — индекс цен производителей, deflator — индекс-дефлятор */
+  indicator?: "icp" | "deflator" | null;
+  /** Индекс-дефлятор справочно, если основным взят ИЦП */
+  ref_deflator?: number | null;
+  /** Новая версия, ожидающая проверки: id утверждённого индекса, который она заменит */
+  pending_of?: number | null;
+  /** Время, когда индекс заменён новой утверждённой версией */
+  superseded_at?: string | null;
+  /** Что изменилось относительно прежней версии */
+  change_note?: string | null;
+  loaded_at?: string | null;
 }
+
+/** Действующий индекс: не ожидающая проверки новая версия и не заменённый */
+export const isActiveIndex = (i: PriceIndex) => !i.pending_of && !i.superseded_at;
 
 export interface Reference {
   sources: Source[];

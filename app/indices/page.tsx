@@ -9,6 +9,9 @@ import {
 } from "@/lib/indexFormat";
 import type { IndexKind, PriceIndex, Reference } from "@/lib/types";
 import { findIndex, okvedSection } from "@/lib/forecast";
+import { isActiveIndex } from "@/lib/types";
+import { MerImportButton } from "@/components/MerImport";
+import { DATA_LINKS, DATA_LINKS_HINT } from "@/lib/sources";
 
 type Tab = { kind: IndexKind; title: string; hint: string; empty: string; extra?: boolean };
 
@@ -138,6 +141,34 @@ function IndexForm({ tab, draft, reference, onClose, onSaved }: {
   );
 }
 
+/* ---------- Где взять данные ---------- */
+function DataLinks({ kind, indices }: { kind: IndexKind; indices: PriceIndex[] }) {
+  const links = DATA_LINKS[kind];
+  if (!links.length) return null;
+  const lastLoad = (codes: string[]) => {
+    const ts = indices.filter((i) => i.source_code && codes.includes(i.source_code) && i.loaded_at).map((i) => Date.parse(i.loaded_at!)).filter(Number.isFinite);
+    return ts.length ? new Date(Math.max(...ts)).toLocaleDateString("ru-RU") : null;
+  };
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+      <p className="text-sm font-semibold text-slate-900">Где взять данные</p>
+      <ul className="mt-2 space-y-2">
+        {links.map((l) => {
+          const d = lastLoad(l.sourceCodes);
+          return (
+            <li key={l.url} className="text-sm">
+              <a href={l.url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand hover:underline">{l.title} ↗</a>
+              <span className="ml-2 text-xs text-slate-500">{d ? `последняя загрузка ${d}` : "ещё не загружали"}</span>
+              <p className="text-xs text-slate-600">{l.description}</p>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="hint mt-2">{DATA_LINKS_HINT}</p>
+    </div>
+  );
+}
+
 /* ---------- Кнопка загрузки файла ---------- */
 function UploadButton({ busy, onFile, primary }: { busy: boolean; onFile: (f: File) => void; primary?: boolean }) {
   return (
@@ -169,11 +200,14 @@ export default function IndicesPage() {
   const [showMissing, setShowMissing] = useState(false);
   const canEdit = db === true;
 
-  const indices = useMemo(() => reference?.indices ?? [], [reference]);
+  // Заменённые версии не показываем; новые версии, ждущие проверки, — рядом с действующими
+  const indices = useMemo(() => (reference?.indices ?? []).filter((i) => !i.superseded_at), [reference]);
+  const activeIndices = useMemo(() => indices.filter(isActiveIndex), [indices]);
   const pendingTotal = indices.filter((i) => !i.approved).length;
   const rows = indices
     .filter((i) => i.kind === tabKind && (!onlyPending || !i.approved))
-    .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0));
+    .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0)
+      || (a.pending_of ? 1 : 0) - (b.pending_of ? 1 : 0));
   const sourceOf = (code: string | null) => (code ? reference?.sources.find((s) => s.code === code) : undefined);
 
   useEffect(() => setSelected(new Set()), [tabKind, onlyPending]);
@@ -181,7 +215,7 @@ export default function IndicesPage() {
   async function approve(ids: number[]) {
     setBusy(true);
     try {
-      for (const id of ids) await api(`/api/dict/price_indices?pk=${id}`, "PUT", { approved: true });
+      await api("/api/indices/approve", "POST", { ids });
       setMsg(ids.length === 1 ? "Индекс утверждён" : `Утверждено индексов: ${ids.length}`);
       setSelected(new Set());
       await reload();
@@ -226,6 +260,7 @@ export default function IndicesPage() {
             <p className="hint mt-1">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={async (m) => { setMsg(m); await reload(); }} />}
             {canEdit && <UploadButton busy={busy} onFile={upload} />}
             <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
           </div>
@@ -283,7 +318,7 @@ export default function IndicesPage() {
                 <thead><tr><th>Код ОКПД2</th><th>Наименование</th><th className="text-right">Позиций</th><th className="w-48" /></tr></thead>
                 <tbody>
                   {coverage.missing.map((m) => {
-                    const added = reference ? findIndex(indices.filter((i) => i.kind === "forecast" && i.year === coverage.targetYear), m.okpd2, okvedSection(m.okpd2, reference)) : null;
+                    const added = reference ? findIndex(activeIndices.filter((i) => i.kind === "forecast" && i.year === coverage.targetYear), m.okpd2, okvedSection(m.okpd2, reference)) : null;
                     return (
                       <tr key={m.okpd2}>
                         <td className="whitespace-nowrap font-medium">{m.okpd2}</td>
@@ -338,14 +373,17 @@ export default function IndicesPage() {
           )}
         </div>
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
+        {(rows.length > 0 || onlyPending) && <DataLinks kind={tabKind} indices={indices} />}
 
         {rows.length === 0 && !onlyPending ? (
           <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center">
             <p className="font-medium text-slate-900">Индексов пока нет</p>
             <p className="hint mx-auto mt-1 max-w-2xl">{tab.empty}</p>
+            <div className="mx-auto mt-4 max-w-2xl text-left"><DataLinks kind={tabKind} indices={indices} /></div>
             {canEdit ? (
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить</button>
+                {tabKind !== "to_december" && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={async (m) => { setMsg(m); await reload(); }} />}
                 <UploadButton busy={busy} onFile={upload} />
               </div>
             ) : db === false && <p className="mt-3 text-sm text-amber-700">Чтобы добавлять индексы, подключите базу данных.</p>}
@@ -382,8 +420,18 @@ export default function IndicesPage() {
                     <td>{ix.year}</td>
                     <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
                     <td>{src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{src.name}</a> : ix.source_code ?? <span className="text-slate-400">не указан</span>}</td>
-                    <td><StatusBadge approved={ix.approved} /></td>
-                    <td className="max-w-xs text-xs text-slate-600">{ix.note}</td>
+                    <td>
+                      {ix.pending_of ? <span className="inline-flex whitespace-nowrap rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 ring-1 ring-sky-200">Новая версия</span> : <StatusBadge approved={ix.approved} />}
+                      {ix.change_note && <p className="mt-1 text-xs text-slate-500">{ix.change_note}</p>}
+                    </td>
+                    <td className="max-w-xs text-xs text-slate-600">
+                      {ix.note && <p>{ix.note}</p>}
+                      {ix.doc_title && <p title={ix.raw_line ?? undefined} className="cursor-help">
+                        {ix.indicator === "icp" ? "ИЦП" : ix.indicator === "deflator" ? "Дефлятор" : ""}{ix.indicator ? " · " : ""}
+                        {ix.doc_title}{ix.doc_date ? `, одобрен ${ix.doc_date}` : ""}{ix.doc_page ? `, ${ix.doc_page}` : ""}
+                        {ix.ref_deflator ? ` · дефлятор справочно ${formatGrowth(ix.ref_deflator)}` : ""}
+                      </p>}
+                    </td>
                     {canEdit && (
                       <td className="whitespace-nowrap text-right">
                         {!ix.approved && <button className="btn-sec mr-1 !px-2.5 !py-1" disabled={busy} onClick={() => approve([ix.id])}>Утвердить</button>}

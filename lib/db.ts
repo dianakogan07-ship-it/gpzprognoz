@@ -1,7 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { SEED } from "./seed";
 import type { Reference } from "./types";
-import { SCHEMA_SQL } from "./schema";
+import { MIGRATIONS_SQL, SCHEMA_SQL } from "./schema";
 
 export const hasDb = () => Boolean(process.env.DATABASE_URL);
 
@@ -23,7 +23,11 @@ export const TABLES = {
   okpd2: { pk: "code", cols: ["code", "name"], order: "code" },
   ws_codes: { pk: "code", cols: ["code", "name", "category", "auto_added"], order: "code" },
   repeat_rules: { pk: "id", cols: ["kind", "prefix", "repeatable", "note"], order: "kind, prefix" },
-  price_indices: { pk: "id", cols: ["kind", "key", "year", "month", "value", "source_code", "approved", "note"], order: "kind, year, key, month" },
+  price_indices: {
+    pk: "id",
+    cols: ["kind", "key", "year", "month", "value", "source_code", "approved", "note", "raw_line", "doc_title", "doc_date", "doc_page", "indicator", "ref_deflator", "change_note"],
+    order: "kind, year, key, month, id",
+  },
 } as const;
 export type TableName = keyof typeof TABLES;
 export const isTable = (t: string): t is TableName => t in TABLES;
@@ -42,8 +46,10 @@ export function ensureSchema(): Promise<void> {
   ready ??= (async () => {
     const db = sql();
     const [{ t }] = await db.query("SELECT to_regclass('public.price_indices') AS t");
+    const stmts = (s: string) => s.split(";").map((x) => x.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
+    if (!t) for (const stmt of stmts(SCHEMA_SQL)) await db.query(stmt);
+    for (const stmt of stmts(MIGRATIONS_SQL)) await db.query(stmt);
     if (t) return;
-    for (const stmt of SCHEMA_SQL.split(";").map((s) => s.trim()).filter(Boolean)) await db.query(stmt);
     for (const name of Object.keys(TABLES) as TableName[]) {
       await upsertRows(name, (SEED_BY_TABLE[name] as Record<string, unknown>[]).map(({ id: _id, ...r }) => r));
     }
@@ -56,7 +62,9 @@ export async function listTable(t: TableName): Promise<Record<string, unknown>[]
   await ensureSchema();
   const def = TABLES[t];
   const rows = await sql().query(`SELECT * FROM ${t} ORDER BY ${def.order}`);
-  return t === "price_indices" ? rows.map((r) => ({ ...r, value: Number(r.value) })) : rows;
+  return t === "price_indices"
+    ? rows.map((r) => ({ ...r, value: Number(r.value), ref_deflator: r.ref_deflator == null ? null : Number(r.ref_deflator) }))
+    : rows;
 }
 
 export async function loadReference(): Promise<Reference> {
@@ -103,7 +111,7 @@ export async function upsertRows(t: TableName, rows: Record<string, unknown>[]) 
     const ph = cols.map((_, i) => `$${i + 1}`).join(", ");
     const natural = def.pk !== "id" && cols.includes(def.pk);
     const conflict = t === "price_indices"
-      ? ` ON CONFLICT (kind, COALESCE(key, ''), year, COALESCE(month, 0)) DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}`
+      ? ` ON CONFLICT (kind, COALESCE(key, ''), year, COALESCE(month, 0)) WHERE pending_of IS NULL AND superseded_at IS NULL DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}, loaded_at = now()`
       : natural ? ` ON CONFLICT (${def.pk}) DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}`
       : t === "repeat_rules" ? ` ON CONFLICT (kind, prefix) DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}`
       : " ON CONFLICT DO NOTHING";
