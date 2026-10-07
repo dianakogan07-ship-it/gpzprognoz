@@ -4,6 +4,8 @@ import { parseGpz, parseReport } from "@/lib/parse";
 import { buildForecast, type ForecastResult } from "@/lib/forecast";
 import { downloadWorkbook, forecastWorkbook } from "@/lib/excel";
 import { api, useReference } from "@/components/useReference";
+import { FilePick } from "@/components/FilePick";
+import { IconDownload, IconPlay } from "@/components/Icons";
 
 const fmt = (n: number) => n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
 
@@ -42,19 +44,19 @@ export default function ForecastPage() {
 
   return (
     <div className="space-y-4">
-      <div className="card space-y-3">
-        <h1 className="text-lg font-semibold">Прогноз цен на {baseYear + 1} год</h1>
-        <p className="text-sm text-slate-600">Файлы читаются в браузере и не передаются на сервер. С сервера загружаются только справочники и индексы.</p>
+      <div className="card space-y-4">
+        <h1 className="text-xl font-semibold text-slate-900">Прогноз цен на {baseYear + 1} год</h1>
+        <p className="hint">Файлы читаются в браузере и не передаются на сервер. С сервера загружаются только справочники и индексы.</p>
         {error && <p className="text-sm text-red-700">{error}</p>}
         {db === false && <p className="text-sm text-amber-700">База данных не подключена — используются встроенные справочники.</p>}
-        <div className="grid gap-3 md:grid-cols-3">
-          <label className="text-sm">ГПЗ {baseYear} (.xlsx)<input type="file" accept=".xlsx,.xls" className="mt-1 block w-full text-sm" onChange={(e) => setGpz(e.target.files?.[0] ?? null)} /></label>
-          <label className="text-sm">Отчётность {baseYear} (.xlsx)<input type="file" accept=".xlsx,.xls" className="mt-1 block w-full text-sm" onChange={(e) => setRep(e.target.files?.[0] ?? null)} /></label>
-          <label className="text-sm">Базовый год<input type="number" className="inp mt-1" value={baseYear} onChange={(e) => setBaseYear(Number(e.target.value))} /></label>
+        <div className="grid items-end gap-4 md:grid-cols-[1fr_1fr_12rem]">
+          <div><span className="field-label">ГПЗ {baseYear}</span><FilePick label="Выберите файл ГПЗ .xlsx" hint="Выгрузка годового плана закупок" file={gpz} onChange={setGpz} /></div>
+          <div><span className="field-label">Отчётность {baseYear}</span><FilePick label="Выберите файл отчётности .xlsx" hint="Выгрузка заключённых договоров" file={rep} onChange={setRep} /></div>
+          <div><label className="field-label" htmlFor="by">Базовый год</label><input id="by" type="number" className="inp py-2" value={baseYear} onChange={(e) => setBaseYear(Number(e.target.value))} /></div>
         </div>
         <div className="flex gap-2">
-          <button className="btn" disabled={!gpz || !rep || !reference || busy} onClick={run}>{busy ? "Расчёт…" : "Рассчитать прогноз"}</button>
-          {res && reference && <button className="btn-sec" onClick={() => downloadWorkbook(forecastWorkbook(res, reference.sources, baseYear + 1), `Прогноз_цен_${baseYear + 1}.xlsx`)}>Скачать Excel</button>}
+          <button className="btn" disabled={!gpz || !rep || !reference || busy} onClick={run}><IconPlay width={16} height={16} />{busy ? "Расчёт…" : "Рассчитать прогноз"}</button>
+          {res && reference && <button className="btn-sec" onClick={() => downloadWorkbook(forecastWorkbook(res, reference.sources, baseYear + 1), `Прогноз_цен_${baseYear + 1}.xlsx`)}><IconDownload />Выгрузить прогноз</button>}
         </div>
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
       </div>

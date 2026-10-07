@@ -34,11 +34,11 @@ export default function DirectoriesPage() {
     <div className="flex gap-4">
       <aside className="w-52 shrink-0 space-y-1">
         {DICTS.map((x, i) => (
-          <button key={x.table} onClick={() => setCur(i)} className={`block w-full rounded px-2 py-1 text-left text-sm ${i === cur ? "bg-blue-700 text-white" : "hover:bg-slate-200"}`}>{x.title}</button>
+          <button key={x.table} onClick={() => setCur(i)} className={`block w-full rounded-lg px-3 py-2 text-left text-sm font-medium transition ${i === cur ? "bg-brand-light text-brand" : "text-slate-600 hover:bg-white"}`}>{x.title}</button>
         ))}
       </aside>
       <section className="card min-w-0 flex-1">
-        <h1 className="mb-2 text-lg font-semibold">{d.title}</h1>
+        <h1 className="mb-3 text-xl font-semibold text-slate-900">{d.title}</h1>
         {db === false && <p className="mb-2 text-sm text-amber-700">База данных не подключена — справочник только для просмотра.</p>}
         <DictTable key={d.table} table={d.table} cols={d.cols} pk={d.pk} readOnly={db !== true} help={d.help} />
       </section>

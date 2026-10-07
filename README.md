@@ -28,7 +28,7 @@ npm test           # проверки расчёта
 
 1. Импортировать репозиторий в Vercel (New Project → GitHub → `gpzprognoz`), фреймворк Next.js определится сам.
 2. Storage → Create Database → Neon (Postgres, бесплатный план) → подключить к проекту. Переменная `DATABASE_URL` появится автоматически.
-3. Settings → Environment Variables: `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD` — логин и пароль входа.
+3. Settings → Environment Variables: `BASIC_AUTH_USER`, `BASIC_AUTH_PASSWORD` — логин и пароль для экрана входа (сессия хранится 30 дней).
 4. Создать таблицы и стартовые справочники (один раз, с локального компьютера):
    ```bash
    DATABASE_URL="строка подключения из Vercel" npm run db:setup

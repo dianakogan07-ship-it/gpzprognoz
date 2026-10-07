@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./useReference";
 import { parseSimpleSheet } from "@/lib/excel";
+import { IconCheck, IconEdit, IconPlus, IconTrash, IconUpload, IconX } from "./Icons";
 
 export type ColType = "text" | "number" | "bool" | string[];
 export interface Col { key: string; label: string; type?: ColType; width?: string }
@@ -47,7 +48,7 @@ export function DictTable({ table, cols, pk, readOnly, help }: { table: string; 
         <input className="inp max-w-xs" placeholder="Поиск" value={q} onChange={(e) => setQ(e.target.value)} />
         <span className="text-sm text-slate-500">Записей: {rows.length}</span>
         {!readOnly && (
-          <label className="btn-sec cursor-pointer">Массовая загрузка из Excel
+          <label className="btn-sec cursor-pointer"><IconUpload />Загрузить из Excel
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={(e) => e.target.files?.[0] && bulk(e.target.files[0])} />
           </label>
         )}
@@ -56,12 +57,12 @@ export function DictTable({ table, cols, pk, readOnly, help }: { table: string; 
       {msg && <p className="text-sm text-slate-700">{msg}</p>}
       <div className="max-h-[65vh] overflow-auto">
         <table className="tbl">
-          <thead><tr>{cols.map((c) => <th key={c.key} style={{ width: c.width }}>{c.label}</th>)}{!readOnly && <th className="w-40" />}</tr></thead>
+          <thead><tr>{cols.map((c) => <th key={c.key} style={{ width: c.width }}>{c.label}</th>)}{!readOnly && <th className="w-28" />}</tr></thead>
           <tbody>
             {!readOnly && (
-              <tr className="bg-blue-50">
+              <tr className="bg-brand-light/60">
                 {cols.map((c) => <td key={c.key}>{c.key === "id" ? "" : <Field col={c} value={draft[c.key]} onChange={(v) => setDraft({ ...draft, [c.key]: v })} />}</td>)}
-                <td><button className="btn" onClick={() => act(() => api(`/api/dict/${table}`, "POST", draft), "Добавлено").then(() => setDraft({}))}>Добавить</button></td>
+                <td><button className="btn" onClick={() => act(() => api(`/api/dict/${table}`, "POST", draft), "Добавлено").then(() => setDraft({}))}><IconPlus width={16} height={16} />Добавить</button></td>
               </tr>
             )}
             {filtered.map((r) => {
@@ -73,13 +74,13 @@ export function DictTable({ table, cols, pk, readOnly, help }: { table: string; 
                     <td className="whitespace-nowrap">
                       {isEdit ? (
                         <>
-                          <button className="btn" onClick={() => act(() => api(`/api/dict/${table}?pk=${encodeURIComponent(String(r[pk]))}`, "PUT", Object.fromEntries(editable.map((c) => [c.key, edit.row[c.key]]))), "Сохранено").then(() => setEdit(null))}>OK</button>{" "}
-                          <button className="btn-sec" onClick={() => setEdit(null)}>Отмена</button>
+                          <button className="btn-icon !bg-brand !text-white" onClick={() => act(() => api(`/api/dict/${table}?pk=${encodeURIComponent(String(r[pk]))}`, "PUT", Object.fromEntries(editable.map((c) => [c.key, edit.row[c.key]]))), "Сохранено").then(() => setEdit(null))} title="Сохранить"><IconCheck width={16} height={16} /></button>{" "}
+                          <button className="btn-icon" onClick={() => setEdit(null)} title="Отмена"><IconX width={16} height={16} /></button>
                         </>
                       ) : (
                         <>
-                          <button className="btn-sec" onClick={() => setEdit({ pk: r[pk], row: { ...r } })}>Изменить</button>{" "}
-                          <button className="btn-sec" onClick={() => confirm("Удалить запись?") && act(() => api(`/api/dict/${table}?pk=${encodeURIComponent(String(r[pk]))}`, "DELETE"))}>✕</button>
+                          <button className="btn-icon" title="Изменить" onClick={() => setEdit({ pk: r[pk], row: { ...r } })}><IconEdit width={16} height={16} /></button>{" "}
+                          <button className="btn-icon" onClick={() => confirm("Удалить запись?") && act(() => api(`/api/dict/${table}?pk=${encodeURIComponent(String(r[pk]))}`, "DELETE"))} title="Удалить"><IconTrash width={16} height={16} /></button>
                         </>
                       )}
                     </td>

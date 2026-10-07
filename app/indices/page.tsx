@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { DictTable } from "@/components/DictTable";
 import { api, useReference } from "@/components/useReference";
+import { IconDownload, IconUpload } from "@/components/Icons";
 import { downloadWorkbook, indexTemplate, parseIndexFile } from "@/lib/excel";
 
 export default function IndicesPage() {
@@ -21,7 +22,7 @@ export default function IndicesPage() {
 
   return (
     <div className="card space-y-3">
-      <h1 className="text-lg font-semibold">Индексы роста цен</h1>
+      <h1 className="text-xl font-semibold text-slate-900">Индексы роста цен</h1>
       <div className="space-y-1 text-sm text-slate-600">
         <p><b>to_december</b> — ИЦП Росстата: коэффициент доведения цены договора, заключённого в указанном месяце, до уровня декабря базового года (по ОКПД2).</p>
         <p><b>forecast</b> — прогнозный индекс-дефлятор МЭР на прогнозный год: по префиксу ОКПД2 («43», «43.2») или по букве раздела ОКВЭД2 («F»).</p>
@@ -29,8 +30,8 @@ export default function IndicesPage() {
         <p>Коэффициент 1,12 = рост 12%. Неутверждённые индексы также дают пометку «требует согласования».</p>
       </div>
       <div className="flex flex-wrap gap-2">
-        <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(reference.indices), "Индексы.xlsx")}>Скачать шаблон с текущими индексами</button>
-        {db && <label className="btn cursor-pointer">Импорт из Excel<input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} /></label>}
+        <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(reference.indices), "Индексы.xlsx")}><IconDownload />Выгрузить индексы</button>
+        {db && <label className="btn-sec cursor-pointer"><IconUpload />Загрузить индексы<input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => e.target.files?.[0] && importFile(e.target.files[0])} /></label>}
       </div>
       {msg && <pre className="whitespace-pre-wrap text-sm">{msg}</pre>}
       <DictTable key={v} table="price_indices" pk="id" readOnly={db !== true} cols={[
