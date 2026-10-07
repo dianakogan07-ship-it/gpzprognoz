@@ -13,6 +13,7 @@ import { isActiveIndex } from "@/lib/types";
 import { MerImportButton } from "@/components/MerImport";
 import { RosstatImportButton } from "@/components/RosstatImport";
 import { DATA_LINKS, DATA_LINKS_HINT } from "@/lib/sources";
+import { lastDataMonth } from "@/lib/logic";
 
 type Tab = { kind: IndexKind; title: string; hint: string; empty: string; extra?: boolean };
 
@@ -21,8 +22,8 @@ const tabsFor = (target: number): Tab[] => [
     empty: "Отраслевые индексы делают прогноз точнее: цены на стройматериалы, ИТ-услуги или топливо растут по-разному. Без них все позиции считаются по общей инфляции и требуют согласования." },
   { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
     empty: "Общая инфляция — запасной вариант: она применяется, когда для отрасли нет своего индекса. Без неё такие позиции останутся без пересчёта на следующий год." },
-  { kind: "to_december", title: "Пересчёт цен внутри года", hint: "Доводит цену договора, заключённого в начале года, до уровня декабря.", extra: true,
-    empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня декабря, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
+  { kind: "to_december", title: "Пересчёт цен внутри года", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
+    empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня последнего месяца с данными Росстата, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
 ];
 
 function StatusBadge({ approved }: { approved: boolean }) {
@@ -195,6 +196,10 @@ export default function IndicesPage() {
   const target = coverage?.targetYear ?? new Date().getFullYear() + 1;
   const tabs = tabsFor(target);
   const [tabKind, setTabKind] = useState<IndexKind>("forecast");
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t === "forecast" || t === "cpi" || t === "to_december") setTabKind(t);
+  }, []);
   const tab = tabs.find((t) => t.kind === tabKind)!;
   const [onlyPending, setOnlyPending] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -221,6 +226,7 @@ export default function IndicesPage() {
     return sel != null && ys.includes(sel) ? sel : ys.includes(defYear(k)) ? defYear(k) : ys[0] ?? defYear(k);
   };
   const year = yearOf(tabKind, yearSel);
+  const lastMonth = lastDataMonth(indices, year);
   const rows = indices
     .filter((i) => i.kind === tabKind && i.year === year && (!onlyPending || !i.approved))
     .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0)
@@ -405,7 +411,9 @@ export default function IndicesPage() {
 
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
-            <p className="hint max-w-3xl">{tab.hint}</p>
+            <p className="hint max-w-3xl">{tabKind === "to_december" && lastMonth
+              ? `Доводит цену договора до уровня последнего месяца с данными Росстата (сейчас — ${MONTHS[lastMonth - 1]} ${year}).`
+              : tab.hint}</p>
             {years.length > 1 && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-slate-600">Год:</span>

@@ -37,6 +37,8 @@ export interface ForecastRow {
   indexApproved: boolean | null;
   indexSourceCode: string | null;
   repeatable: boolean | null;
+  /** Ставка НДС из ГПЗ (или отчётности), доля: 0.22; нет в файлах — null */
+  vatRate?: number | null;
   /** Способ закупки — самый частый в группе */
   method?: string | null;
   /** Обезличенные договоры группы: цена за единицу без НДС и месяц заключения — для пересчёта по новым индексам */
@@ -59,6 +61,8 @@ export interface ContractPoint {
   raw: number;
   /** Месяц заключения договора, 1–12 */
   month: number | null;
+  /** Ставка НДС, доля */
+  vat?: number | null;
 }
 export interface ExcludedRow { file: "ГПЗ" | "Отчётность"; row: number; lot: string | null; reason: string }
 export interface ForecastResult { rows: ForecastRow[]; excluded: ExcludedRow[]; newWsCodes: string[]; stats: { gpz: number; matched: number; used: number } }
@@ -143,6 +147,7 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       okpd2: g.okpd2, unit: unitLabel(g.unitName ?? g.unit, ref), region: g.region, ws, category: g.category,
       method: g.method ?? null, subject: anonymize(g.subject ?? ""),
       raw: rep.priceNoVat / qty, month: rep.contractDate ? rep.contractDate.getUTCMonth() + 1 : null,
+      vat: g.vatRate ?? rep.vatRate ?? null,
     });
   }
   const rows = aggregateForecast(points, ref, opt);
@@ -262,6 +267,7 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       indexSourceCode: used?.source_code ?? null,
       repeatable,
       method: mostFrequent(items.map((i) => i.p.method)),
+      vatRate: ((v) => (v == null ? null : Number(v)))(mostFrequent(items.map((i) => (i.p.vat == null ? null : String(i.p.vat))))),
       points: items.map((i) => ({ ...i.p, raw: round2(i.p.raw) })),
       needsApproval, smallSample, flags,
       comment: [`Медиана ${items.length - outliers} дог. ${round2(base)} ₽ → ${pct(k)}`, ...notes].join("; "),

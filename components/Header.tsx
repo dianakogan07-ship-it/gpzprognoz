@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { IconLogout } from "./Icons";
 
-const NAV = [["/", "Прогнозы"], ["/indices", "Индексы роста"], ["/directories", "Справочники"]];
+const NAV = [["/", "Прогнозы"], ["/indices", "Индексы роста"], ["/directories", "Справочники"], ["/logic", "Логика расчётов"]];
 
 export function Header() {
   const path = usePathname();

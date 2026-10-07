@@ -287,7 +287,7 @@ export async function recalc(forecastId: number, author: string, why?: string) {
   const ref = await loadReference();
   const items = await db.query("SELECT okpd2, unit, region, category, method, subject, data FROM forecast_items WHERE version_id = $1", [f.current_version_id]);
   const points: ContractPoint[] = items.flatMap((i) => ((i.data.pts ?? []) as [number, number | null][]).map(([raw, month]) => ({
-    okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method, subject: i.subject, raw, month,
+    okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method, subject: i.subject, raw, month, vat: i.data.vatRate ?? null,
   })));
   const rows = aggregateForecast(points, ref, { baseYear: f.base_year, targetYear: f.year });
   const snap = indexSnapshot(ref, f.year, f.base_year);
@@ -305,7 +305,7 @@ export async function reproduce(versionId: number) {
   const ref = refFromSnapshot(await loadReference(), v.index_snapshot);
   const items = await db.query("SELECT okpd2, unit, region, category, method, subject, data FROM forecast_items WHERE version_id = $1", [versionId]);
   const points: ContractPoint[] = items.flatMap((i) => ((i.data.pts ?? []) as [number, number | null][]).map(([raw, month]) => ({
-    okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method, subject: i.subject, raw, month,
+    okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method, subject: i.subject, raw, month, vat: i.data.vatRate ?? null,
   })));
   return aggregateForecast(points, ref, { baseYear: v.base_year, targetYear: v.year });
 }

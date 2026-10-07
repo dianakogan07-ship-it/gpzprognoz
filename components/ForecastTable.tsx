@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { IconDownload, IconEdit } from "./Icons";
+import { IconDownload, IconEdit, IconHelp } from "./Icons";
 import { Chip, MultiSelect } from "./MultiSelect";
 import {
   CONTRACTS_LABEL, EMPTY_FILTERS, FLAG_LABEL, REASON_TEXT, REPEAT_LABEL, SOURCE_LABEL, STATUS_LABEL,
@@ -167,7 +167,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
     + (f.okpd ? 1 : 0) + (f.growthMin != null || f.growthMax != null ? 1 : 0);
   const toggleRow = (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const hasMethods = counts.method.size > 1 || !counts.method.has("");
-  const cols = onEdit ? 8 : 7;
+  const cols = 8;
 
   return (
     <>
@@ -224,7 +224,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
 
             {/* Таблица */}
             <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[680px]">
-              <colgroup><col className="w-8" /><col /><col className="w-44" /><col className="w-16" /><col className="w-36" /><col className="w-40" /><col className="w-10" />{onEdit && <col className="w-12" />}</colgroup>
+              <colgroup><col className="w-8" /><col /><col className="w-44" /><col className="w-16" /><col className="w-36" /><col className="w-40" /><col className="w-10" /><col className="w-20" /></colgroup>
               <thead>
                 <tr>
                   <th />
@@ -234,7 +234,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
                   <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
                   <th><span className="sr-only">Статус</span></th>
-                  {onEdit && <th />}
+                  <th />
                 </tr>
               </thead>
               <tbody>
@@ -258,14 +258,20 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                           <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
                         </td>
                         <td className="text-center"><StatusDot v={v} hidden={hint?.reason ?? null} /></td>
-                        {onEdit && (
-                          <td className="text-right" onClick={(e) => e.stopPropagation()}>
+                        <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                          {onEdit && (
                             <button type="button" title="Изменить" aria-label="Изменить" onClick={() => onEdit(v)}
                               className="rounded-lg p-1.5 text-slate-500 opacity-0 transition hover:bg-slate-100 hover:text-brand focus:opacity-100 group-hover:opacity-100">
                               <IconEdit width={16} height={16} />
                             </button>
-                          </td>
-                        )}
+                          )}
+                          {v.meta && (
+                            <Link href={`/logic?row=${v.meta.itemId}`} title="Как посчитано" aria-label="Как посчитано"
+                              className="inline-flex rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-brand">
+                              <IconHelp width={16} height={16} />
+                            </Link>
+                          )}
+                        </td>
                       </tr>
                       {open && (
                         <tr className="bg-brand-light/40"><td /><td colSpan={cols - 1} className="pb-4">

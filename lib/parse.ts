@@ -16,6 +16,8 @@ export interface GpzRow {
   region: string | null;
   category: string | null;
   ws: string | null;
+  /** Ставка НДС, доля: 0.22 */
+  vatRate: number | null;
 }
 export interface ReportRow {
   row: number;
@@ -26,6 +28,7 @@ export interface ReportRow {
   quantity: number | null;
   contractDate: Date | null;
   ws: string | null;
+  vatRate: number | null;
 }
 
 type Matcher = RegExp[];
@@ -41,6 +44,7 @@ const GPZ_COLS: Record<keyof Omit<GpzRow, "row">, Matcher> = {
   category: [/категори/i],
   method: [/способ\S*\s+закупк/i, /^способ/i],
   ws: [/\bws\b/i, /код\s*ws/i, /код\s+услуг/i, /услуг\S* \/ код$/i],
+  vatRate: [/ставк\S*\s*ндс/i, /^ндс,?\s*%?$/i],
 };
 const REPORT_COLS: Record<string, Matcher> = {
   lot: GPZ_COLS.lot,
@@ -164,6 +168,7 @@ export function parseGpz(buf: ArrayBuffer, regionCodes: string[]) {
       region: normRegion(cell(r, c.region), regionCodes),
       category: str(cell(r, c.category)),
       ws: normWs(cell(r, c.ws)),
+      vatRate: parseVatRate(cell(r, c.vatRate)),
     });
   });
   return { rows: out, headers, columns: c };
@@ -194,6 +199,7 @@ export function parseReport(buf: ArrayBuffer) {
       quantity: toNumber(cell(r, c.quantity)),
       contractDate: toDate(cell(r, c.contractDate)),
       ws: normWs(cell(r, c.ws)),
+      vatRate: parseVatRate(cell(r, c.vatRate)),
     });
   });
   return { rows: out, headers, columns: c };

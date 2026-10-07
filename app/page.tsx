@@ -154,6 +154,7 @@ export default function ForecastsPage() {
         <h1 className="text-2xl font-semibold text-slate-900">Прогнозы</h1>
         <div className="flex gap-2">
           <Link href="/directories" className="btn !bg-[#0f1b4c] hover:!bg-[#0a1338]">Справочники</Link>
+          <Link href="/logic" className="btn-sec">Логика расчётов</Link>
           <Link href="/forecasts/new" className="btn"><IconPlus width={16} height={16} />Новый прогноз</Link>
         </div>
       </div>
