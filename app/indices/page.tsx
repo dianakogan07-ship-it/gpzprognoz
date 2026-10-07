@@ -21,7 +21,7 @@ const tabsFor = (target: number): Tab[] => [
     empty: "Отраслевые индексы делают прогноз точнее: цены на стройматериалы, ИТ-услуги или топливо растут по-разному. Без них все позиции считаются по общей инфляции и требуют согласования." },
   { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
     empty: "Общая инфляция — запасной вариант: она применяется, когда для отрасли нет своего индекса. Без неё такие позиции останутся без пересчёта на следующий год." },
-  { kind: "to_december", title: `Пересчёт цен внутри ${target - 1}`, hint: "Доводит цену договора, заключённого в начале года, до уровня декабря.", extra: true,
+  { kind: "to_december", title: "Пересчёт цен внутри года", hint: "Доводит цену договора, заключённого в начале года, до уровня декабря.", extra: true,
     empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня декабря, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
 ];
 
@@ -211,13 +211,23 @@ export default function IndicesPage() {
   const indices = useMemo(() => (reference?.indices ?? []).filter((i) => !i.superseded_at), [reference]);
   const activeIndices = useMemo(() => indices.filter(isActiveIndex), [indices]);
   const pendingTotal = indices.filter((i) => !i.approved).length;
+  // Индексы разных лет не смешиваем: по умолчанию — год текущего расчёта
+  const [yearSel, setYearSel] = useState<number | null>(null);
+  const defYear = (k: IndexKind) => (k === "to_december" ? target - 1 : target);
+  const yearsOf = (k: IndexKind) => [...new Set(indices.filter((i) => i.kind === k).map((i) => i.year))].sort((a, b) => b - a);
+  const years = yearsOf(tabKind);
+  const yearOf = (k: IndexKind, sel: number | null) => {
+    const ys = yearsOf(k);
+    return sel != null && ys.includes(sel) ? sel : ys.includes(defYear(k)) ? defYear(k) : ys[0] ?? defYear(k);
+  };
+  const year = yearOf(tabKind, yearSel);
   const rows = indices
-    .filter((i) => i.kind === tabKind && (!onlyPending || !i.approved))
+    .filter((i) => i.kind === tabKind && i.year === year && (!onlyPending || !i.approved))
     .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0)
       || (a.pending_of ? 1 : 0) - (b.pending_of ? 1 : 0));
   const sourceOf = (code: string | null) => (code ? reference?.sources.find((s) => s.code === code) : undefined);
 
-  useEffect(() => setSelected(new Set()), [tabKind, onlyPending]);
+  useEffect(() => setSelected(new Set()), [tabKind, onlyPending, year]);
 
   async function approve(ids: number[]) {
     setBusy(true);
@@ -381,9 +391,9 @@ export default function IndicesPage() {
 
         <div className="flex flex-wrap gap-1 border-b border-slate-200">
           {tabs.map((t) => {
-            const n = indices.filter((i) => i.kind === t.kind && (!onlyPending || !i.approved)).length;
+            const n = indices.filter((i) => i.kind === t.kind && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved)).length;
             return (
-              <button key={t.kind} onClick={() => setTabKind(t.kind)}
+              <button key={t.kind} onClick={() => { setTabKind(t.kind); setYearSel(null); }}
                 className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${t.kind === tabKind ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
                 {t.title}
                 {t.extra && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">доп. настройка</span>}
@@ -394,7 +404,20 @@ export default function IndicesPage() {
         </div>
 
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="hint max-w-3xl">{tab.hint}</p>
+          <div className="space-y-2">
+            <p className="hint max-w-3xl">{tab.hint}</p>
+            {years.length > 1 && (
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <span className="text-slate-600">Год:</span>
+                {years.map((y) => (
+                  <button key={y} type="button" onClick={() => setYearSel(y)}
+                    className={`rounded-lg border px-3 py-1 ${y === year ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                    {y} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === tabKind && i.year === y && (!onlyPending || !i.approved)).length}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           {canEdit && (
             <div className="flex gap-2">
               {selected.size > 0 && <button className="btn-sec" disabled={busy} onClick={() => approve([...selected])}><IconCheck width={16} height={16} />Утвердить выбранные ({selected.size})</button>}
