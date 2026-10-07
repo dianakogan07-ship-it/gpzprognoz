@@ -1,6 +1,7 @@
 import "./globals.css";
 import type { ReactNode } from "react";
 import { Header } from "@/components/Header";
+import { UpdateWatcher } from "@/components/UpdateWatcher";
 
 export const metadata = { title: "Прогноз цен ГПЗ", description: "Обезличенный справочник прогнозных цен по предметам закупки" };
 
@@ -15,6 +16,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       <body>
         <Header />
         <main className="mx-auto max-w-7xl px-4 py-6">{children}</main>
+        <UpdateWatcher />
       </body>
     </html>
   );
