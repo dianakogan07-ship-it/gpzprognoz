@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { handle } from "@/lib/api";
-import { currentAuthor, deleteForecast, getForecast, updateCard } from "@/lib/forecasts/store";
+import { changeYears, currentAuthor, deleteForecast, getForecast, updateCard } from "@/lib/forecasts/store";
 
 export const dynamic = "force-dynamic";
 export const fetchCache = "force-no-store";
@@ -9,9 +9,10 @@ export const GET = (req: NextRequest, { params }: { params: { id: string } }) =>
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   return handle(async () => {
-    const b = (await req.json()) as { title?: string; color?: string | null };
+    const b = (await req.json()) as { title?: string; color?: string | null; year?: number; baseYear?: number };
     await updateCard(Number(params.id), b, currentAuthor());
-    return { ok: true };
+    const v = b.year && b.baseYear ? await changeYears(Number(params.id), b.year, b.baseYear, currentAuthor()) : null;
+    return { ok: true, newVersion: v };
   }, true);
 }
 

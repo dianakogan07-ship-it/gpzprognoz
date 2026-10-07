@@ -7,25 +7,11 @@ import { Menu, type MenuItem } from "@/components/Menu";
 import { PromptModal } from "@/components/PromptModal";
 import { IconPlus } from "@/components/Icons";
 import { exportVersion, fmtDate } from "@/lib/forecasts/client";
-import { CARD_COLORS, STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
-import { Modal } from "@/components/Modal";
+import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
+import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { fmtGrowth, plural } from "@/lib/forecastView";
 
-/** Цвета шапки, выбранные вручную (классы перечислены полностью, чтобы стили попали в сборку) */
-const COLOR_CLASS: Record<CardColor, string> = {
-  violet: "bg-violet-500", teal: "bg-teal-500", emerald: "bg-emerald-600", blue: "bg-blue-600",
-  sky: "bg-sky-500", amber: "bg-amber-500", rose: "bg-rose-500", slate: "bg-slate-500",
-};
-const COLOR_TITLE: Record<CardColor, string> = {
-  violet: "Сиреневый", teal: "Бирюзовый", emerald: "Зелёный", blue: "Синий", sky: "Голубой", amber: "Жёлтый", rose: "Розовый", slate: "Серый",
-};
-const HEAD: Record<ForecastStatus, string> = {
-  draft: "bg-violet-500",
-  review: "bg-teal-500",
-  approved: "bg-emerald-600",
-  archived: "bg-slate-400",
-};
 type Sort = "year" | "updated" | "status";
 const STATUS_ORDER: ForecastStatus[] = ["draft", "review", "approved", "archived"];
 const rub = (n: number) => `${Math.round(n).toLocaleString("ru-RU")} ₽`;
@@ -48,6 +34,7 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
   const archived = c.status === "archived";
   const tail: MenuItem[] = [
     { label: "Изменить карточку", onClick: () => onAction(c, "edit") },
+    ...(archived ? [] : [{ label: "Загрузить новые файлы", onClick: () => onAction(c, "files") }]),
     { label: "Удалить", onClick: () => onAction(c, "delete"), danger: true },
   ];
   const items: MenuItem[] = archived
@@ -118,7 +105,7 @@ export default function ForecastsPage() {
   const [sort, setSort] = useState<Sort>("year");
   const [year, setYear] = useState<string>("");
   const [versionFor, setVersionFor] = useState<ForecastCard | null>(null);
-  const [editing, setEditing] = useState<ForecastCard | null>(null);
+  const [editing, setEditing] = useState<{ c: ForecastCard; files: boolean } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -145,7 +132,8 @@ export default function ForecastsPage() {
       if (a === "history") router.push(`/forecasts/${c.id}/history`);
       if (a === "compare") router.push(`/forecasts/${c.id}/compare`);
       if (a === "version") setVersionFor(c);
-      if (a === "edit") setEditing(c);
+      if (a === "edit") setEditing({ c, files: false });
+      if (a === "files") setEditing({ c, files: true });
       if (a === "delete" && confirm(`Удалить прогноз «${c.title}» со всеми версиями и историей? Восстановить его будет нельзя.`)) {
         await api(`/api/forecasts/${c.id}`, "DELETE"); setMsg(`Прогноз «${c.title}» удалён`); await load();
       }
@@ -201,7 +189,10 @@ export default function ForecastsPage() {
         {shown.map((c) => <Card key={c.id} c={c} onAction={onAction} />)}
       </div>
 
-      {editing && <EditCard c={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
+      {editing && reference && (
+        <EditCard c={editing.c} reference={reference} focusFiles={editing.files} onClose={() => setEditing(null)}
+          onSaved={async (m) => { setEditing(null); if (m) setMsg(m); await load(); }} />
+      )}
       {versionFor && (
         <PromptModal title="Новая версия" subtitle={`${versionFor.title} · сейчас v${versionFor.version}`} label="Что меняется" placeholder="Например: уточнены цены по аренде" action="Создать версию"
           onClose={() => setVersionFor(null)}
@@ -214,38 +205,3 @@ export default function ForecastsPage() {
   );
 }
 
-function EditCard({ c, onClose, onSaved }: { c: ForecastCard; onClose: () => void; onSaved: () => Promise<void> }) {
-  const [title, setTitle] = useState(c.title);
-  const [color, setColor] = useState<string | null>(c.color);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  async function save() {
-    if (!title.trim()) return setError("Укажите название");
-    setBusy(true); setError(null);
-    try { await api(`/api/forecasts/${c.id}`, "PATCH", { title, color }); await onSaved(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
-  }
-  const swatch = (k: string | null, cls: string, label: string) => (
-    <button key={label} type="button" title={label} aria-label={label} onClick={() => setColor(k)}
-      className={`h-9 w-9 rounded-full ${cls} ring-offset-2 transition ${color === k ? "ring-2 ring-brand" : "hover:scale-110"}`} />
-  );
-  return (
-    <Modal title="Карточка прогноза" subtitle={`Прогноз на ${c.year} · база ${c.base_year}`} onClose={onClose}
-      footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={busy} onClick={save}>{busy ? "Сохранение…" : "Сохранить"}</button></>}>
-      <div><label className="field-label" htmlFor="ct">Название</label>
-        <input id="ct" autoFocus className="inp py-2" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
-      <div>
-        <span className="field-label">Цвет карточки</span>
-        <div className="flex flex-wrap items-center gap-3">
-          {swatch(null, `${HEAD[c.status]} bg-[linear-gradient(135deg,transparent_45%,white_45%,white_55%,transparent_55%)]`, "По статусу")}
-          {CARD_COLORS.map((k) => swatch(k, COLOR_CLASS[k], COLOR_TITLE[k]))}
-        </div>
-        <p className="hint mt-2">{color ? "Цвет выбран вручную." : "Цвет меняется вместе со статусом: черновик — сиреневый, на проверке — бирюзовый, утверждён — зелёный."}</p>
-      </div>
-      <div className={`overflow-hidden rounded-lg ${color ? COLOR_CLASS[color as CardColor] : HEAD[c.status]} px-4 py-3 text-white`}>
-        <p className="font-semibold">{title || "Без названия"}</p>
-        <p className="text-sm text-white/85">Прогноз на {c.year} · база {c.base_year} · v{c.version}</p>
-      </div>
-      {error && <p className="text-sm text-red-600">{error}</p>}
-    </Modal>
-  );
-}

@@ -2,17 +2,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { parseGpz, parseReport } from "@/lib/parse";
-import { buildForecast, type ForecastRow } from "@/lib/forecast";
 import { api, useReference } from "@/components/useReference";
+import { calcFromFiles, saveRows } from "@/lib/forecasts/client";
 import { FilePick } from "@/components/FilePick";
 import { IconPlay } from "@/components/Icons";
-import { COVERAGE_KEY, buildCoverage } from "@/lib/indexFormat";
-
-const CHUNK = 300;
-
-/** Договоры в строке — только цена и месяц: этого достаточно для пересчёта */
-const slim = (r: ForecastRow) => ({ ...r, points: (r.points ?? []).map((p) => ({ raw: p.raw, month: p.month })) });
 
 export default function NewForecastPage() {
   const router = useRouter();
@@ -31,19 +24,10 @@ export default function NewForecastPage() {
     setError(null);
     try {
       setStep("Чтение файлов и расчёт…");
-      const g = parseGpz(await gpz.arrayBuffer(), reference.regions.map((r) => r.code));
-      const r = parseReport(await rep.arrayBuffer());
-      const result = buildForecast(g.rows, r.rows, reference, { baseYear, targetYear: year });
-      if (!result.rows.length) throw new Error(`Ни одна строка не вошла в расчёт (не вошли: ${result.excluded.length}). Проверьте, что выбраны ГПЗ и отчётность одного года.`);
-      try { localStorage.setItem(COVERAGE_KEY, JSON.stringify(buildCoverage(result.rows, year))); } catch { /* недоступно */ }
-      if (result.newWsCodes.length) await api("/api/ws/auto", "POST", { codes: result.newWsCodes }).catch(() => null);
+      const calc = await calcFromFiles(gpz, rep, reference, year, baseYear);
       setStep("Сохранение прогноза…");
       const { id, versionId } = await api("/api/forecasts", "POST", { title: title.trim() || `Прогноз ${year}`, year, baseYear });
-      for (let i = 0; i < result.rows.length; i += CHUNK) {
-        setStep(`Сохранение строк: ${Math.min(i + CHUNK, result.rows.length)} из ${result.rows.length}…`);
-        await api(`/api/forecasts/${id}/items`, "POST", { versionId, rows: result.rows.slice(i, i + CHUNK).map(slim) });
-      }
-      await api(`/api/forecasts/${id}/finalize`, "POST", { versionId, gpzRows: g.rows.length, excluded: result.excluded.length });
+      await saveRows(id, versionId, calc, setStep);
       router.push(`/forecasts/${id}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

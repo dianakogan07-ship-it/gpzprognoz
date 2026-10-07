@@ -235,6 +235,34 @@ export async function updateCard(forecastId: number, p: { title?: string; color?
   }
 }
 
+const checkYears = (year: number, baseYear: number) => {
+  if (!(year > 2000 && year < 2100) || !(baseYear > 2000 && baseYear < 2100)) throw new Error("Укажите год прогноза и базовый год");
+  if (baseYear >= year) throw new Error("Базовый год должен быть раньше года прогноза");
+};
+
+/** Смена года прогноза и базового года — прогноз пересчитывается новой версией по индексам нового года */
+export async function changeYears(forecastId: number, year: number, baseYear: number, author: string) {
+  checkYears(year, baseYear);
+  const f = await forecastOf(forecastId);
+  if (f.status === "archived") throw new Error("Прогноз в архиве — изменения невозможны");
+  if (f.year === year && f.base_year === baseYear) return null;
+  await sql().query("UPDATE forecasts SET year = $1, base_year = $2 WHERE id = $3", [year, baseYear, forecastId]);
+  return recalc(forecastId, author, `Изменены годы: прогноз на ${year}, база ${baseYear} (было ${f.year} и ${f.base_year})`);
+}
+
+/**
+ * Новые файлы ГПЗ и отчётности: пустая новая версия со снимком индексов,
+ * строки догружаются частями тем же способом, что и при создании прогноза.
+ */
+export async function newDataVersion(forecastId: number, year: number, baseYear: number, author: string) {
+  checkYears(year, baseYear);
+  const f = await forecastOf(forecastId);
+  if (f.status === "archived") throw new Error("Прогноз в архиве — изменения невозможны");
+  await sql().query("UPDATE forecasts SET year = $1, base_year = $2 WHERE id = $3", [year, baseYear, forecastId]);
+  const snap = indexSnapshot(await loadReference(), year, baseYear);
+  return newVersion(forecastId, "Загружены новые файлы ГПЗ и отчётности", author, [], snap);
+}
+
 /** Удаление прогноза со всеми версиями, строками, историей и фактом */
 export async function deleteForecast(forecastId: number) {
   await sql().query("DELETE FROM forecasts WHERE id = $1", [forecastId]);
@@ -250,7 +278,7 @@ export async function setStatus(forecastId: number, to: ForecastStatus, author: 
 }
 
 /** Пересчёт по действующим индексам — новая версия. Ручные правки не переносятся */
-export async function recalc(forecastId: number, author: string) {
+export async function recalc(forecastId: number, author: string, why?: string) {
   const db = sql();
   const f = await forecastOf(forecastId);
   const ref = await loadReference();
@@ -261,7 +289,7 @@ export async function recalc(forecastId: number, author: string) {
   const rows = aggregateForecast(points, ref, { baseYear: f.base_year, targetYear: f.year });
   const snap = indexSnapshot(ref, f.year, f.base_year);
   const edited = (await db.query("SELECT count(*) AS n FROM forecast_items WHERE version_id = $1 AND manually_edited", [f.current_version_id]))[0].n;
-  const comment = `Пересчёт по новым индексам${Number(edited) ? ` (ручные правки ${edited} строк не перенесены)` : ""}`;
+  const comment = `${why ?? "Пересчёт по новым индексам"}${Number(edited) ? ` (ручные правки ${edited} строк не перенесены)` : ""}`;
   const v = await newVersion(forecastId, comment, author, rows, snap);
   await log({ forecastId, versionId: v.versionId, type: "recalc", newValue: `v${v.number}`, reason: comment, author });
   return v;
