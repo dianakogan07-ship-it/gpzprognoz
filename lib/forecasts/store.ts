@@ -2,7 +2,7 @@ import { ensureDemo, loadReference, sql } from "../db";
 import type { Reference } from "../types";
 import { aggregateForecast, groupKey, type ContractPoint, type ForecastRow } from "../forecast";
 import {
-  canTransition, fingerprint, hasNewIndices, indexSnapshot, isFrozen, mape, refFromSnapshot, statsOf,
+  CARD_COLORS, canTransition, fingerprint, hasNewIndices, indexSnapshot, isFrozen, mape, refFromSnapshot, statsOf,
   type ForecastStatus, type SnapshotIndex, type StoredItem, type VersionStats,
 } from "./model";
 
@@ -16,6 +16,7 @@ export interface ForecastCard {
   year: number;
   base_year: number;
   status: ForecastStatus;
+  color: string | null;
   version: number;
   version_id: number;
   updated_at: string;
@@ -30,7 +31,7 @@ export async function listForecasts(): Promise<ForecastCard[]> {
   await ensureDemo();
   const db = sql();
   const rows = await db.query(`
-    SELECT f.id, f.title, f.year, f.base_year, f.status, f.updated_at, v.id AS version_id, v.number AS version, v.stats, v.index_snapshot,
+    SELECT f.id, f.title, f.year, f.base_year, f.status, f.color, f.updated_at, v.id AS version_id, v.number AS version, v.stats, v.index_snapshot,
       (SELECT count(*) FROM actuals a WHERE a.forecast_id = f.id) AS actual_rows,
       (SELECT avg(abs(i.forecast_price - a.actual_price) / NULLIF(a.actual_price, 0))
          FROM actuals a JOIN forecast_items i ON i.version_id = f.current_version_id AND i.item_key = a.item_key
@@ -40,7 +41,7 @@ export async function listForecasts(): Promise<ForecastCard[]> {
   return rows.map((r) => {
     const m = num(r.mape);
     return {
-      id: r.id, title: r.title, year: r.year, base_year: r.base_year, status: r.status, version: r.version, version_id: r.version_id,
+      id: r.id, title: r.title, year: r.year, base_year: r.base_year, status: r.status, color: r.color ?? null, version: r.version, version_id: r.version_id,
       updated_at: new Date(r.updated_at).toISOString(), stats: r.stats,
       newIndices: r.status !== "archived" && hasNewIndices(indexSnapshot(ref, r.year, r.base_year), r.index_snapshot ?? []),
       accuracy: m == null ? null : Math.max(0, Math.round((100 - m * 100) * 10) / 10),
@@ -213,6 +214,30 @@ export async function editItem(forecastId: number, itemId: number, field: EditFi
   await log({ forecastId, versionId: f.current_version_id, itemId: item.id, okpd2: item.okpd2, type: field === "reviewed" ? "review" : "edit", field, oldValue, newValue, reason: reason.trim(), author });
   await touch(forecastId);
   return { itemId: item.id as number, newVersion: created, stats };
+}
+
+/** Название и цвет карточки — не меняют расчёт, поэтому доступны в любом статусе */
+export async function updateCard(forecastId: number, p: { title?: string; color?: string | null }, author: string) {
+  const f = await forecastOf(forecastId);
+  const db = sql();
+  if (p.title !== undefined) {
+    const title = p.title.trim();
+    if (!title) throw new Error("Название не может быть пустым");
+    const [old] = await db.query("SELECT title FROM forecasts WHERE id = $1", [forecastId]);
+    if (old.title !== title) {
+      await db.query("UPDATE forecasts SET title = $1, updated_at = now() WHERE id = $2", [title, forecastId]);
+      await log({ forecastId, versionId: f.current_version_id, type: "rename", field: "title", oldValue: old.title, newValue: title, author });
+    }
+  }
+  if (p.color !== undefined) {
+    if (p.color !== null && !(CARD_COLORS as readonly string[]).includes(p.color)) throw new Error("Неизвестный цвет");
+    await db.query("UPDATE forecasts SET color = $1 WHERE id = $2", [p.color, forecastId]);
+  }
+}
+
+/** Удаление прогноза со всеми версиями, строками, историей и фактом */
+export async function deleteForecast(forecastId: number) {
+  await sql().query("DELETE FROM forecasts WHERE id = $1", [forecastId]);
 }
 
 export async function setStatus(forecastId: number, to: ForecastStatus, author: string, reason?: string) {

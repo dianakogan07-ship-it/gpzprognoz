@@ -4,6 +4,10 @@ import type { PriceIndex, Reference } from "../types";
 export type ForecastStatus = "draft" | "review" | "approved" | "archived";
 export const STATUS_TITLE: Record<ForecastStatus, string> = { draft: "Черновик", review: "На проверке", approved: "Утверждён", archived: "В архиве" };
 
+/** Цвета шапки карточки на выбор */
+export const CARD_COLORS = ["violet", "teal", "emerald", "blue", "sky", "amber", "rose", "slate"] as const;
+export type CardColor = (typeof CARD_COLORS)[number];
+
 /** Разрешённые переходы статусов */
 export const TRANSITIONS: Record<ForecastStatus, ForecastStatus[]> = {
   draft: ["review", "archived"],
@@ -133,8 +137,9 @@ export const EVENT_TITLE: Record<string, string> = {
   review: "Проверка строки",
   version: "Новая версия",
   status: "Смена статуса",
+  rename: "Переименование",
   recalc: "Пересчёт по новым индексам",
   actual: "Загрузка факта",
 };
 
-export const FIELD_TITLE: Record<string, string> = { forecast_price: "Прогноз", index_value: "Рост", reviewed: "Проверено", status: "Статус" };
+export const FIELD_TITLE: Record<string, string> = { forecast_price: "Прогноз", index_value: "Рост", reviewed: "Проверено", status: "Статус", title: "Название" };

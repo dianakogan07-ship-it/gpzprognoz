@@ -7,10 +7,19 @@ import { Menu, type MenuItem } from "@/components/Menu";
 import { PromptModal } from "@/components/PromptModal";
 import { IconPlus } from "@/components/Icons";
 import { exportVersion, fmtDate } from "@/lib/forecasts/client";
-import { STATUS_TITLE, type ForecastStatus } from "@/lib/forecasts/model";
+import { CARD_COLORS, STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
+import { Modal } from "@/components/Modal";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { fmtGrowth, plural } from "@/lib/forecastView";
 
+/** Цвета шапки, выбранные вручную (классы перечислены полностью, чтобы стили попали в сборку) */
+const COLOR_CLASS: Record<CardColor, string> = {
+  violet: "bg-violet-500", teal: "bg-teal-500", emerald: "bg-emerald-600", blue: "bg-blue-600",
+  sky: "bg-sky-500", amber: "bg-amber-500", rose: "bg-rose-500", slate: "bg-slate-500",
+};
+const COLOR_TITLE: Record<CardColor, string> = {
+  violet: "Сиреневый", teal: "Бирюзовый", emerald: "Зелёный", blue: "Синий", sky: "Голубой", amber: "Жёлтый", rose: "Розовый", slate: "Серый",
+};
 const HEAD: Record<ForecastStatus, string> = {
   draft: "bg-violet-500",
   review: "bg-teal-500",
@@ -37,20 +46,25 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
   const s = c.stats;
   const reviewedPct = s.needsReview ? (s.reviewed / s.needsReview) * 100 : 100;
   const archived = c.status === "archived";
+  const tail: MenuItem[] = [
+    { label: "Изменить карточку", onClick: () => onAction(c, "edit") },
+    { label: "Удалить", onClick: () => onAction(c, "delete"), danger: true },
+  ];
   const items: MenuItem[] = archived
-    ? [{ label: "Открыть", onClick: () => onAction(c, "open") }, { label: "История", onClick: () => onAction(c, "history") }, { label: "Сравнить", onClick: () => onAction(c, "compare") }]
+    ? [{ label: "Открыть", onClick: () => onAction(c, "open") }, { label: "История", onClick: () => onAction(c, "history") }, { label: "Сравнить", onClick: () => onAction(c, "compare") }, ...tail]
     : [
       { label: "Открыть", onClick: () => onAction(c, "open") },
       { label: "Новая версия", onClick: () => onAction(c, "version") },
       { label: "Сравнить", onClick: () => onAction(c, "compare") },
       { label: "История", onClick: () => onAction(c, "history") },
       { label: "Выгрузить в Excel", onClick: () => onAction(c, "export") },
-      { label: "В архив", onClick: () => onAction(c, "archive"), danger: true },
+      { label: "В архив", onClick: () => onAction(c, "archive") },
+      ...tail,
     ];
   return (
     <div role="link" tabIndex={0} onClick={() => router.push(`/forecasts/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && router.push(`/forecasts/${c.id}`)}
       className="flex cursor-pointer flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className={`${HEAD[c.status]} px-5 py-4 text-white`}>
+      <div className={`${c.color && c.color in COLOR_CLASS ? COLOR_CLASS[c.color as CardColor] : HEAD[c.status]} px-5 py-4 text-white`}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate font-semibold" title={c.title}>{c.title}</p>
@@ -68,6 +82,7 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
         <div>
           <p className={`text-3xl font-semibold ${s.growth < 0 ? "text-red-700" : "text-slate-900"}`}>{fmtGrowth(s.growth)}</p>
           <p className="mt-1 text-xs text-slate-500">База {rub(s.baseSum)} → Прогноз {rub(s.forecastSum)}</p>
+          <p className="mt-0.5 text-xs text-slate-500">{s.items} {plural(s.items, "позиция", "позиции", "позиций")} по {s.contracts} {plural(s.contracts, "договору", "договорам", "договорам")}</p>
         </div>
         <div>
           {c.actualRows > 0 && (
@@ -79,8 +94,12 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
           )}
           {showAccuracy && c.accuracy != null
             ? <Progress value={c.accuracy} label="Точность прогноза" tone="bg-sky-500" />
-            : s.needsReview ? <Progress value={reviewedPct} label={`Проверено: ${s.reviewed} из ${s.needsReview}`} />
-            : <p className="text-sm text-emerald-700">Проверка не требуется</p>}
+            : s.needsReview ? (
+              <div title="Позиции, где нет отраслевого индекса или индекс не утверждён, помечаются «согласовать человеком». Здесь видно, сколько из них уже проверено.">
+                <Progress value={reviewedPct} label={`Согласовано ${s.reviewed} из ${s.needsReview} ${plural(s.needsReview, "позиции", "позиций", "позиций")} с отметкой «проверить»`} />
+              </div>
+            )
+            : <p className="text-sm text-emerald-700">Все позиции посчитаны по утверждённым отраслевым индексам — проверка не требуется</p>}
         </div>
         <button className="mt-auto self-start text-left text-xs text-slate-500 hover:text-brand hover:underline" onClick={(e) => { e.stopPropagation(); onAction(c, "history"); }}>
           изменён {fmtDate(c.updated_at)} · {s.edits} {plural(s.edits, "ручная правка", "ручные правки", "ручных правок")}
@@ -99,6 +118,7 @@ export default function ForecastsPage() {
   const [sort, setSort] = useState<Sort>("year");
   const [year, setYear] = useState<string>("");
   const [versionFor, setVersionFor] = useState<ForecastCard | null>(null);
+  const [editing, setEditing] = useState<ForecastCard | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -125,6 +145,10 @@ export default function ForecastsPage() {
       if (a === "history") router.push(`/forecasts/${c.id}/history`);
       if (a === "compare") router.push(`/forecasts/${c.id}/compare`);
       if (a === "version") setVersionFor(c);
+      if (a === "edit") setEditing(c);
+      if (a === "delete" && confirm(`Удалить прогноз «${c.title}» со всеми версиями и историей? Восстановить его будет нельзя.`)) {
+        await api(`/api/forecasts/${c.id}`, "DELETE"); setMsg(`Прогноз «${c.title}» удалён`); await load();
+      }
       if (a === "export" && reference) await exportVersion(c, c.version_id, c.version, reference.sources);
       if (a === "archive" && confirm(`Перенести «${c.title}» в архив? Изменить его будет нельзя.`)) {
         await api(`/api/forecasts/${c.id}/status`, "POST", { to: "archived" }); await load();
@@ -177,6 +201,7 @@ export default function ForecastsPage() {
         {shown.map((c) => <Card key={c.id} c={c} onAction={onAction} />)}
       </div>
 
+      {editing && <EditCard c={editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await load(); }} />}
       {versionFor && (
         <PromptModal title="Новая версия" subtitle={`${versionFor.title} · сейчас v${versionFor.version}`} label="Что меняется" placeholder="Например: уточнены цены по аренде" action="Создать версию"
           onClose={() => setVersionFor(null)}
@@ -186,5 +211,41 @@ export default function ForecastsPage() {
           }} />
       )}
     </div>
+  );
+}
+
+function EditCard({ c, onClose, onSaved }: { c: ForecastCard; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [title, setTitle] = useState(c.title);
+  const [color, setColor] = useState<string | null>(c.color);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function save() {
+    if (!title.trim()) return setError("Укажите название");
+    setBusy(true); setError(null);
+    try { await api(`/api/forecasts/${c.id}`, "PATCH", { title, color }); await onSaved(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
+  }
+  const swatch = (k: string | null, cls: string, label: string) => (
+    <button key={label} type="button" title={label} aria-label={label} onClick={() => setColor(k)}
+      className={`h-9 w-9 rounded-full ${cls} ring-offset-2 transition ${color === k ? "ring-2 ring-brand" : "hover:scale-110"}`} />
+  );
+  return (
+    <Modal title="Карточка прогноза" subtitle={`Прогноз на ${c.year} · база ${c.base_year}`} onClose={onClose}
+      footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={busy} onClick={save}>{busy ? "Сохранение…" : "Сохранить"}</button></>}>
+      <div><label className="field-label" htmlFor="ct">Название</label>
+        <input id="ct" autoFocus className="inp py-2" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
+      <div>
+        <span className="field-label">Цвет карточки</span>
+        <div className="flex flex-wrap items-center gap-3">
+          {swatch(null, `${HEAD[c.status]} bg-[linear-gradient(135deg,transparent_45%,white_45%,white_55%,transparent_55%)]`, "По статусу")}
+          {CARD_COLORS.map((k) => swatch(k, COLOR_CLASS[k], COLOR_TITLE[k]))}
+        </div>
+        <p className="hint mt-2">{color ? "Цвет выбран вручную." : "Цвет меняется вместе со статусом: черновик — сиреневый, на проверке — бирюзовый, утверждён — зелёный."}</p>
+      </div>
+      <div className={`overflow-hidden rounded-lg ${color ? COLOR_CLASS[color as CardColor] : HEAD[c.status]} px-4 py-3 text-white`}>
+        <p className="font-semibold">{title || "Без названия"}</p>
+        <p className="text-sm text-white/85">Прогноз на {c.year} · база {c.base_year} · v{c.version}</p>
+      </div>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </Modal>
   );
 }

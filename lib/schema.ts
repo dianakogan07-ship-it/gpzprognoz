@@ -134,5 +134,7 @@ CREATE TABLE IF NOT EXISTS actuals (
   author TEXT NOT NULL DEFAULT 'owner',
   loaded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key)
+CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key);
+-- Цвет карточки, выбранный пользователем (пусто — по статусу)
+ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS color TEXT
 `;

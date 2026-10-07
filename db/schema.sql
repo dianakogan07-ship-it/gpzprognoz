@@ -129,3 +129,4 @@ CREATE TABLE IF NOT EXISTS actuals (
   loaded_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key);
+ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS color TEXT;
