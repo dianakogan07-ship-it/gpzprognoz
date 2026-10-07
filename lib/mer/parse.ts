@@ -45,20 +45,30 @@ export function parseGroup(label: string): { keys: string[]; codeText: string } 
   const paren = [...label.matchAll(/\(([^()]*)\)/g)].map((m) => m[1].trim());
   for (const p of paren) {
     const inner = p.replace(/^(код\S*|окв[эе]д\s*2?)\s*/i, "");
-    if (/^\d{2}(\s*[+,;\-–]\s*\d{2})*$/.test(inner)) return { keys: expandCodes(inner), codeText: inner.replace(/\s+/g, "") };
+    if (/^\d{2}(\.\d+)*(\s*[+,;\-–]\s*\d{2}(\.\d+)*)*$/.test(inner)) return { keys: expandCodes(inner), codeText: inner.replace(/\s+/g, "").replace(/,/g, ", ") };
     const s = inner.match(/^(?:раздел\S*\s+)?([A-UА-Я])$/i);
     if (s) return { keys: [latin(s[1])], codeText: `Раздел ${latin(s[1])}` };
   }
   if (sec) return { keys: [latin(sec[1])], codeText: `Раздел ${latin(sec[1])}` };
+  // Виды деятельности, которые МЭР пишет без кода
+  for (const [re, letter] of NAMED_SECTIONS) if (re.test(label)) return { keys: [letter], codeText: `Раздел ${letter}` };
   return null;
 }
+
+const NAMED_SECTIONS: [RegExp, string][] = [
+  [/^обеспечение электрической энергией/i, "D"],
+  [/^водоснабжение;?\s*водоотведение/i, "E"],
+  [/^строительство(?![а-яё])/i, "F"],
+  [/^транспорт(ировка и хранение|,\s*вкл|$)/i, "H"],
+  [/^сельское хозяйство$/i, "A"],
+];
 
 export function expandCodes(s: string): string[] {
   const out: string[] = [];
   for (const part of s.split(/\s*[+,;]\s*/)) {
     const range = part.match(/^(\d{2})\s*[-–]\s*(\d{2})$/);
     if (range) for (let c = +range[1]; c <= +range[2]; c++) out.push(String(c).padStart(2, "0"));
-    else if (/^\d{2}$/.test(part)) out.push(part);
+    else if (/^\d{2}(\.\d+)*$/.test(part)) out.push(part);
   }
   return [...new Set(out)];
 }
@@ -146,7 +156,7 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
   let tablePage: string | null = null;
   const start = all.findIndex((x, i) => /цен\S*\s+производител|дефлятор/i.test(rowText(x.r)) && !hasAnyNumber(x.r)
     && TABLE_TITLE(rowText(x.r) + " " + (all[i + 1]?.pi === x.pi ? rowText(all[i + 1].r) : "")));
-  if (start < 0) warnings.push("В этом файле нет таблицы индексов цен производителей и индексов-дефляторов по видам деятельности — отраслевые индексы не загрузятся. МЭР публикует её отдельным файлом с таблицами (приложения к прогнозу); загрузите его тоже.");
+  if (start < 0) warnings.push("В этом файле нет таблицы индексов цен производителей и индексов-дефляторов по видам деятельности — отраслевые индексы не загрузятся. МЭР публикует её в архиве с таблицами к прогнозу (Attachments, .7z) — загрузите этот архив.");
   else {
     tablePage = pages[all[start].pi].label;
     if (!/базов/i.test(all.slice(start, start + 15).map((x) => rowText(x.r)).join(" ")) && !/базов/i.test(rowText(all[start].r))) {
@@ -161,6 +171,8 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
       const page = pages[pi];
       const rs = page.rows;
       const from = pi === all[start].pi ? all[start].ri : 0;
+      // Новая таблица (например, квартальные значения на другом листе) — конец нужной
+      if (pi !== all[start].pi && seenData && rs.slice(0, 8).some((r) => TABLE_TITLE(rowText(r)))) break;
       // Заголовок с годами — в первых строках таблицы на каждой странице
       let headerEnd = from;
       while (headerEnd < rs.length && !rs[headerEnd].cells.some((c) => YEAR(targetYear).test(c.text)) && headerEnd - from < 25) headerEnd++;
@@ -184,6 +196,11 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
           continue;
         }
         seenData = true;
+        // Строка только с видом показателя («дефлятор», «ИЦП») под заголовком без кода — заголовок становится группой
+        if (pendingLabel && ownLabel(label).length <= 3 && indicatorOf(label)) {
+          group = { ...(parseGroup(pendingLabel) ?? { keys: [], codeText: "" }), label: pendingLabel };
+          pendingLabel = "";
+        }
         const full = cleanText(`${pendingLabel} ${label}`);
         const wrapped = pendingLabel;
         pendingLabel = "";
@@ -205,7 +222,8 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
     // Объединение ИЦП и дефлятора одного вида деятельности
     const byGroup = new Map<string, Raw[]>();
     found.forEach((f, i) => {
-      const k = f.keys.length ? f.codeText : `?${i}`;
+      // Без кода объединяем строки одного заголовка (ИЦП и дефлятор под ним), иначе каждая отдельно
+      const k = f.keys.length ? f.codeText : f.groupLabel && indicatorOf(f.raw) && f.raw.startsWith(`${f.groupLabel} →`) ? `?${f.groupLabel}` : `?${i}`;
       byGroup.set(k, [...(byGroup.get(k) ?? []), f]);
     });
     let n = 0;
@@ -224,6 +242,19 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
         id: `f${n++}`, kind: "forecast", keys: main.keys, codeText: main.codeText, indicator: main.indicator,
         value: v.value, deflator: d, raw: items.map((x) => x.raw).join("\n"), page: main.page, problems,
       });
+    }
+    // Сводные строки («05, 06+09») уступают более точным («05», «06+09»): код берётся из самой узкой строки
+    const owner = new Map<string, MerRow>();
+    for (const r of rows) for (const k of r.keys) {
+      const cur = owner.get(k);
+      if (!cur || (!r.problems.length && (cur.problems.length || r.keys.length < cur.keys.length))) owner.set(k, r);
+    }
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const r = rows[i];
+      if (!r.keys.length) continue;
+      const kept = r.keys.filter((k) => owner.get(k) === r);
+      if (!kept.length) rows.splice(i, 1);
+      else if (kept.length < r.keys.length) { r.keys = kept; r.codeText = kept.join(", "); }
     }
     if (!rows.length && start >= 0) warnings.push("Таблица найдена, но строки с кодами ОКВЭД2 не распознаны");
   }
@@ -258,6 +289,7 @@ function findCpi(pages: Page[], year: number): MerRow | null {
         label = `${heading} (базовый)`;
       }
       if (!label) continue; // значения прошлых лет без подписи
+      if (/(ипц|цен\S*)\s+на\s+(товары|услуги)/i.test(label)) continue;
       const isCpi = /потребительск\S*\s+цен|(^|[^а-яё])ипц($|[^а-яё])/i.test(label) || (/потребительск\S*\s+цен|(^|[^а-яё])ипц($|[^а-яё])/i.test(heading) && /(в среднем|на конец|декабр)/i.test(label));
       if (!isCpi) { if (!/\(базовый\)$/.test(label)) heading = ""; continue; }
       const v = valueAt(rs[i], col);

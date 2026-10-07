@@ -59,7 +59,8 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
       const r = j as MerParseResult;
       setResult(r);
       setDoc({ title: r.title ?? "", date: r.approvedDate ?? "" });
-      setRows(r.rows.map((x) => ({ ...x, codeInput: x.kind === "cpi" ? "" : x.codeText.replace(/^Раздел\s+/, ""), percentInput: toPercent(x.value), include: !x.problems.length })));
+      // Сначала разобранные строки, неоднозначные — в конце
+      setRows([...r.rows].sort((a, b) => Number(a.problems.length > 0) - Number(b.problems.length > 0)).map((x) => ({ ...x, codeInput: x.kind === "cpi" ? "" : x.codeText.replace(/^Раздел\s+/, ""), percentInput: toPercent(x.value), include: !x.problems.length })));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -111,7 +112,7 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
   return (
     <>
       <label className={`btn-sec cursor-pointer ${busy || disabled ? "pointer-events-none opacity-50" : ""}`}><IconUpload />{busy && !result ? "Разбор файла…" : "Загрузить прогноз МЭР"}
-        <input type="file" accept=".pdf,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+        <input type="file" accept=".7z,.zip,.rar,.pdf,.xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
       </label>
       {error && !result && <span className="text-sm text-red-600">{error}</span>}
       {result && (

@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { expandCodes, indicatorOf, parseCodeInput, parseGroup, parseMer, toCoef } from "@/lib/mer/parse";
 import { pdfToPages } from "@/lib/mer/pdf";
 import { xlsxToPages } from "@/lib/mer/xlsx";
+import { pickMerFiles, unpackArchive } from "@/lib/mer/archive";
 import { planMerCommit, summarize, type MerIncoming } from "@/lib/mer/plan";
 import type { PriceIndex } from "@/lib/types";
 
@@ -14,7 +15,9 @@ describe("разбор подписей", () => {
   it("коды ОКВЭД2 и разделы", () => {
     expect(parseGroup("Добыча полезных ископаемых (Раздел B)")).toEqual({ keys: ["B"], codeText: "Раздел B" });
     expect(parseGroup("Строительство (раздел F)")?.keys).toEqual(["F"]);
-    expect(parseGroup("Строительство (раздел Ғ)")).toBeNull();
+    expect(parseGroup("Прочие (раздел Ғ)")).toBeNull();
+    expect(parseGroup("Строительство")?.keys).toEqual(["F"]);
+    expect(parseGroup("Строительные материалы")).toBeNull();
     expect(parseGroup("Раздел С — обрабатывающие производства")?.keys).toEqual(["C"]); // кириллическая «С»
     expect(parseGroup("Добыча угля (05)")).toEqual({ keys: ["05"], codeText: "05" });
     expect(parseGroup("Нефть и газ (06+09)")).toEqual({ keys: ["06", "09"], codeText: "06+09" });
@@ -134,6 +137,40 @@ describe("прогноз МЭР: варианты строками, ИПЦ пр�
     expect(res.rows).toEqual([expect.objectContaining({ kind: "cpi", value: 1.04, problems: [] })]);
     expect(res.rows[0].raw).toContain("базовый");
     expect(res.warnings[0]).toContain("нет таблицы индексов цен производителей");
+  });
+});
+
+describe("архив таблиц МЭР (прогноз 2027–2029)", async () => {
+  const files = await unpackArchive(new Uint8Array(readFileSync(path.join(__dirname, "fixtures/mer-attachments-2026.7z"))));
+  const picked = pickMerFiles(files);
+  const pages = picked.flatMap((f) => xlsxToPages(f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength) as ArrayBuffer));
+  const res = parseMer(pages, 2027);
+  const r = byCode(res);
+  it("берёт из архива только дефляторы и ИПЦ базового варианта", () => {
+    expect(files).toHaveLength(10);
+    expect(picked.map((f) => f.name)).toEqual(["4. ИПЦ_базовый.xlsx", "6. Дефляторы_базовый.xlsx"]);
+  });
+  it("отраслевые индексы: ИЦП основным, дефлятор справочно; коды через запятую и с точкой", () => {
+    expect(r["Раздел C"]).toMatchObject({ indicator: "icp", value: 1.047, deflator: 1.049, problems: [] });
+    expect(r["19.2"]).toMatchObject({ keys: ["19.2"], value: 1.059 });
+    expect(r["26, 27, 28, 29, 30, 33"]).toMatchObject({ keys: ["26", "27", "28", "29", "30", "33"], value: 1.049 });
+    expect(r["Раздел F"]).toMatchObject({ value: 1.054, deflator: 1.055 }); // «Строительство» без кода
+    expect(r["Раздел A"]).toMatchObject({ indicator: "deflator", value: 1.047 });
+  });
+  it("сводная строка «05, 06+09» уступает точным «05» и «06+09»", () => {
+    expect(r["05"]?.value).toBe(1.056);
+    expect(r["06+09"]?.keys).toEqual(["06", "09"]);
+    expect(res.rows.some((x) => x.codeText === "05, 06+09")).toBe(false);
+    const keys = res.rows.flatMap((x) => x.keys);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+  it("ИПЦ — в среднем за год, «ИПЦ на товары» не путается с общим", () => {
+    expect(r["ИПЦ"]).toMatchObject({ kind: "cpi", value: 1.05, problems: [] });
+    expect(r["ИПЦ"].raw).toContain("в среднем за год");
+    expect(res.rows.filter((x) => x.kind === "cpi")).toHaveLength(1);
+  });
+  it("квартальная таблица на втором листе не дублирует строки", () => {
+    expect(res.rows.filter((x) => x.codeText === "Раздел C")).toHaveLength(1);
   });
 });
 
