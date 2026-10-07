@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
-import type { ForecastResult } from "./forecast";
+import type { ForecastResult, ForecastRow } from "./forecast";
+import { REASON_TEXT, STATUS_LABEL, reasonsOf, statusOf } from "./forecastView";
 import type { PriceIndex, Source } from "./types";
 import { VAT_RATES } from "./seed";
 import { normOkpd2, toNumber } from "./normalize";
@@ -7,26 +8,26 @@ import { KIND_LABEL, MONTHS, coefToPercent } from "./indexFormat";
 
 const yesNo = (b: boolean | null) => (b == null ? "не определено" : b ? "да" : "нет");
 
-export function forecastWorkbook(res: ForecastResult, sources: Source[], targetYear: number): XLSX.WorkBook {
+export function forecastWorkbook(res: ForecastResult, sources: Source[], targetYear: number, rows: ForecastRow[] = res.rows): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
-  const main = res.rows.map((r) => ({
+  const main = rows.map((r) => ({
     "ОКПД2": r.okpd2,
     "Предмет (обезличенный)": r.subject,
     "Категория": r.category ?? "",
     "Код WS": r.ws ?? "",
     "Регион": r.regionName ?? r.region ?? "",
-    "Ед. изм.": r.unit,
+    "Ед. изм.": r.unitLabel,
     "Договоров": r.contracts,
     "Мин. цена, ₽ без НДС": r.minPrice,
     "Макс. цена, ₽ без НДС": r.maxPrice,
     [`Цена ${targetYear - 1} (медиана, дек.), ₽ без НДС`]: r.basePrice,
-    [`Индекс ${targetYear}`]: r.forecastIndex,
+    [`Рост ${targetYear}, %`]: Math.round((r.forecastIndex - 1) * 1000) / 10,
     "Источник индекса": r.indexSource,
     "Ссылка на источник": r.indexSourceUrl,
     [`Прогноз ${targetYear}, ₽ без НДС`]: r.forecastPrice,
     "Повторяющаяся": yesNo(r.repeatable),
-    "Требует согласования": r.needsApproval ? "да" : "",
-    "Отметки": r.flags.join(", "),
+    "Статус": STATUS_LABEL[statusOf(r)],
+    "Причины": reasonsOf(r).map((x) => REASON_TEXT[x]).join("; "),
     "Комментарий": r.comment,
   }));
   const ws1 = XLSX.utils.json_to_sheet(main);

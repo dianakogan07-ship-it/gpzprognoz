@@ -8,6 +8,8 @@ export interface GpzRow {
   subject: string | null;
   okpd2: string | null;
   unit: string | null;
+  /** Наименование единицы, если в ГПЗ есть отдельная колонка (приоритетнее кода) */
+  unitName: string | null;
   quantity: number | null;
   region: string | null;
   category: string | null;
@@ -31,6 +33,7 @@ const GPZ_COLS: Record<keyof Omit<GpzRow, "row">, Matcher> = {
   subject: [/предмет/i, /наименовани\S*\s+(закупк|лот|договор)/i],
   okpd2: [/окпд/i],
   unit: [/ед\S*\s*изм/i, /океи/i],
+  unitName: [/единиц\S*\s+измерени\S*\s*\/\s*наименовани/i, /наименовани\S*\s+(единиц|ед\.|океи)/i],
   quantity: [/количеств/i, /объ[её]м/i],
   region: [/окато/i, /регион/i],
   category: [/категори/i],
@@ -152,6 +155,7 @@ export function parseGpz(buf: ArrayBuffer, regionCodes: string[]) {
       subject: str(cell(r, c.subject)),
       okpd2: normOkpd2(cell(r, c.okpd2)),
       unit: normUnit(cell(r, c.unit)),
+      unitName: normUnit(cell(r, c.unitName)),
       quantity: toNumber(cell(r, c.quantity)),
       region: normRegion(cell(r, c.region), regionCodes),
       category: str(cell(r, c.category)),

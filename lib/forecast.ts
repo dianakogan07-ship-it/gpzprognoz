@@ -10,6 +10,8 @@ export interface ForecastRow {
   ws: string | null;
   subject: string;
   unit: string;
+  /** Обозначение единицы для показа: «шт», «компл», «мес» */
+  unitLabel: string;
   region: string | null;
   regionName: string | null;
   contracts: number;
@@ -23,6 +25,17 @@ export interface ForecastRow {
   indexSource: string;
   indexSourceUrl: string;
   forecastPrice: number;
+  /** Цены за единицу без НДС по договорам, вошедшим в медиану (до пересчёта на декабрь) */
+  prices: number[];
+  /** Медиана этих цен до пересчёта на декабрь */
+  rawMedian: number;
+  /** Цены, исключённые как выбросы (после пересчёта на декабрь) */
+  outlierPrices: number[];
+  /** Пересчёт до декабря: применён ко всем / к части / ни к одному / не требовался (договоры декабря) */
+  toDecember: "applied" | "partial" | "none" | "not_needed";
+  indexKey: string | null;
+  indexApproved: boolean | null;
+  indexSourceCode: string | null;
   repeatable: boolean | null;
   needsApproval: boolean;
   smallSample: boolean;
@@ -97,7 +110,7 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
   const knownWs = new Set(ref.ws.map((w) => w.code));
   const newWs = new Set<string>();
 
-  type Item = { g: GpzRow; price: number; adjusted: boolean };
+  type Item = { g: GpzRow; raw: number; price: number; adjusted: boolean; needed: boolean };
   const groups = new Map<string, Item[]>();
   let matched = 0;
 
@@ -113,9 +126,10 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     if (!g.okpd2) { ex("Не указан ОКПД2"); continue; }
     const qty = rep.quantity ?? g.quantity;
     if (!qty || qty <= 0) { ex("Не указано количество"); continue; }
-    if (!g.unit) { ex("Не указана единица измерения"); continue; }
+    if (!g.unit && !g.unitName) { ex("Не указана единица измерения"); continue; }
 
-    let price = rep.priceNoVat / qty;
+    const raw = rep.priceNoVat / qty;
+    let price = raw;
     let adjusted = true;
     const month = rep.contractDate ? rep.contractDate.getUTCMonth() + 1 : null;
     if (month !== 12) {
@@ -124,8 +138,9 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       if (hit) price *= hit.index.value;
       else adjusted = false;
     }
-    const key = [g.okpd2, g.unit, g.region ?? "", ws ?? ""].join("|");
-    const item = { g: { ...g, ws }, price, adjusted };
+    const unit = unitLabel(g.unitName ?? g.unit, ref);
+    const key = [g.okpd2, unit, g.region ?? "", ws ?? ""].join("|");
+    const item = { g: { ...g, ws, unit }, raw, price, adjusted, needed: month !== 12 };
     groups.get(key)?.push(item) ?? groups.set(key, [item]);
   }
 
@@ -142,6 +157,12 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     const g0 = items[0].g;
     const okpd2 = g0.okpd2!;
     const { value: base, kept, outliers } = robustMedian(items.map((i) => i.price));
+    const m0 = median(items.map((i) => i.price));
+    const keptItems = items.filter((i) => i.price <= m0 * OUTLIER_FACTOR && i.price >= m0 / OUTLIER_FACTOR);
+    const outlierPrices = items.filter((i) => !keptItems.includes(i)).map((i) => round2(i.price));
+    const needed = items.filter((i) => i.needed);
+    const toDecember: ForecastRow["toDecember"] = !needed.length ? "not_needed"
+      : needed.every((i) => i.adjusted) ? "applied" : needed.some((i) => i.adjusted) ? "partial" : "none";
     const flags: string[] = [];
     const notes: string[] = [];
     const smallSample = items.length < SMALL_SAMPLE;
@@ -180,7 +201,7 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       okpd2, okpd2Name: name,
       category: g0.category, ws: g0.ws,
       subject: name || anonymize(subjects[0] ?? ""),
-      unit: g0.unit!, region: g0.region,
+      unit: g0.unit!, unitLabel: g0.unit!, region: g0.region,
       regionName: ref.regions.find((r) => r.code === g0.region)?.name ?? null,
       contracts: items.length, outliers,
       minPrice: round2(Math.min(...kept)), maxPrice: round2(Math.max(...kept)),
@@ -188,6 +209,13 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       forecastIndex: k, indexLevel: level, indexSource: src,
       indexSourceUrl: used?.source_code ? sourceByCode.get(used.source_code)?.url ?? "" : "",
       forecastPrice: round2(base * k),
+      prices: keptItems.map((i) => round2(i.raw)).sort((a, b) => a - b),
+      rawMedian: round2(median(keptItems.map((i) => i.raw))),
+      outlierPrices,
+      toDecember,
+      indexKey: used?.key ?? null,
+      indexApproved: used ? used.approved : null,
+      indexSourceCode: used?.source_code ?? null,
       repeatable, needsApproval, smallSample, flags,
       comment: [`Медиана ${items.length - outliers} дог. ${round2(base)} ₽ → ${pct(k)}`, ...notes].join("; "),
     });
@@ -199,6 +227,15 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     if (!(r.lot && gLots.has(r.lot)) && !(r.procId && gProcs.has(r.procId))) excluded.push({ file: "Отчётность", row: r.row, lot: r.lot ?? r.procId, reason: "Нет в ГПЗ" });
   }
   return { rows, excluded, newWsCodes: [...newWs].sort(), stats: { gpz: gpz.length, matched, used: rows.reduce((s, r) => s + r.contracts, 0) } };
+}
+
+/** Обозначение единицы: код ОКЕИ или полное наименование переводятся в краткое («796» → «шт», «Комплект» → «компл») */
+export function unitLabel(v: string | null, ref: Pick<Reference, "okei">): string {
+  const s = (v ?? "").trim().toLowerCase().replace(/\.$/, "");
+  if (!s) return "";
+  const byCode = /^\d+$/.test(s) ? ref.okei.find((o) => o.code === s.padStart(3, "0")) : undefined;
+  const hit = byCode ?? ref.okei.find((o) => o.name.toLowerCase() === s || o.short.toLowerCase() === s);
+  return hit ? hit.short : s;
 }
 
 /** Убирает из текста предмета наименования организаций и ИНН */
