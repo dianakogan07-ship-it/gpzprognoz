@@ -11,6 +11,7 @@ import type { IndexKind, PriceIndex, Reference } from "@/lib/types";
 import { findIndex, okvedSection } from "@/lib/forecast";
 import { isActiveIndex } from "@/lib/types";
 import { MerImportButton } from "@/components/MerImport";
+import { RosstatImportButton } from "@/components/RosstatImport";
 import { DATA_LINKS, DATA_LINKS_HINT } from "@/lib/sources";
 
 type Tab = { kind: IndexKind; title: string; hint: string; empty: string; extra?: boolean };
@@ -257,6 +258,13 @@ export default function IndicesPage() {
     setOnlyPending(true);
   }
 
+  async function afterRosstat(m: string) {
+    setNotice(m);
+    await reload();
+    setTabKind("to_december");
+    setOnlyPending(true);
+  }
+
   const openNew = (kind: IndexKind = tabKind, key = "") =>
     setForm({ key, year: kind === "to_december" ? target - 1 : target, month: 1, percent: "", source_code: "", note: "", approved: false });
   const openEdit = (ix: PriceIndex) => setForm({
@@ -276,6 +284,7 @@ export default function IndicesPage() {
           <p className="hint">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
           <div className="flex flex-wrap items-center gap-2">
             {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
+            {canEdit && reference && <RosstatImportButton reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />}
             {canEdit && <UploadButton busy={busy} onFile={upload} />}
             <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
           </div>
@@ -404,6 +413,7 @@ export default function IndicesPage() {
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить</button>
                 {tabKind !== "to_december" && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
+                {tabKind === "to_december" && reference && <RosstatImportButton reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />}
                 <UploadButton busy={busy} onFile={upload} />
               </div>
             ) : db === false && <p className="mt-3 text-sm text-amber-700">Чтобы добавлять индексы, подключите базу данных.</p>}
