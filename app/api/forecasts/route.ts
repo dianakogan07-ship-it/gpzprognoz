@@ -3,6 +3,7 @@ import { handle } from "@/lib/api";
 import { createForecast, currentAuthor, listForecasts } from "@/lib/forecasts/store";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export const GET = () => handle(() => listForecasts(), true);
 

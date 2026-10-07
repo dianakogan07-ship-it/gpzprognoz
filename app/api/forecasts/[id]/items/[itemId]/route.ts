@@ -3,6 +3,7 @@ import { handle } from "@/lib/api";
 import { currentAuthor, editItem, type EditField } from "@/lib/forecasts/store";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string; itemId: string } }) {
   return handle(async () => {

@@ -3,6 +3,7 @@ import { deleteRow, insertRow, isTable, listTable, updateRow } from "@/lib/db";
 import { handle, json } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 type Ctx = { params: { table: string } };
 const bad = () => json({ error: "Неизвестный справочник" }, 404);
 

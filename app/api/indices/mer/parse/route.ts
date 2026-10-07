@@ -18,6 +18,7 @@ async function toPages(name: string, data: Uint8Array): Promise<Page[]> {
 }
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 

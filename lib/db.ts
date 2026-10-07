@@ -13,7 +13,8 @@ export function sql(): Db {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL не задан");
   // Для локальной проверки: обычный PostgreSQL вместо Neon (DATABASE_URL=local, PG_LOCAL_HOST=/путь/к/сокету)
   if (process.env.DATABASE_URL === "local") return (local ??= localPg());
-  return neon(process.env.DATABASE_URL) as unknown as Db;
+  // Запросы к Neon идут через fetch: без no-store Next.js/Vercel кэширует их ответы, и страницы видят старые данные
+  return neon(process.env.DATABASE_URL, { fetchOptions: { cache: "no-store" } }) as unknown as Db;
 }
 
 function localPg(): Db {

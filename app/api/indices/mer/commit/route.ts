@@ -4,6 +4,7 @@ import { commitMer } from "@/lib/mer/commit";
 import type { MerDoc, MerIncoming } from "@/lib/mer/plan";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {

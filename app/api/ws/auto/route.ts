@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import { handle } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 /** Пополнение справочника кодов WS новыми кодами из загруженной отчётности */
 export async function POST(req: NextRequest) {

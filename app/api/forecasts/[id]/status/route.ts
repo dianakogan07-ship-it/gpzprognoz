@@ -4,6 +4,7 @@ import { currentAuthor, setStatus } from "@/lib/forecasts/store";
 import type { ForecastStatus } from "@/lib/forecasts/model";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   return handle(async () => {

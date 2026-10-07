@@ -3,6 +3,7 @@ import { handle } from "@/lib/api";
 import { currentAuthor, newVersion } from "@/lib/forecasts/store";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   return handle(async () => {

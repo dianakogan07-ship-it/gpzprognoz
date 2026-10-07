@@ -3,6 +3,7 @@ import { handle } from "@/lib/api";
 import { approveIndices } from "@/lib/mer/commit";
 
 export const dynamic = "force-dynamic";
+export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
