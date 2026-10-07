@@ -1,6 +1,7 @@
 import { neon } from "@neondatabase/serverless";
 import { SEED } from "./seed";
 import type { Reference } from "./types";
+import { SCHEMA_SQL } from "./schema";
 
 export const hasDb = () => Boolean(process.env.DATABASE_URL);
 
@@ -34,8 +35,25 @@ const SEED_BY_TABLE: Record<TableName, unknown[]> = {
   repeat_rules: SEED.repeatRules, price_indices: SEED.indices,
 };
 
+let ready: Promise<void> | null = null;
+
+/** Создаёт таблицы и стартовые справочники, если база пустая */
+export function ensureSchema(): Promise<void> {
+  ready ??= (async () => {
+    const db = sql();
+    const [{ t }] = await db.query("SELECT to_regclass('public.price_indices') AS t");
+    if (t) return;
+    for (const stmt of SCHEMA_SQL.split(";").map((s) => s.trim()).filter(Boolean)) await db.query(stmt);
+    for (const name of Object.keys(TABLES) as TableName[]) {
+      await upsertRows(name, (SEED_BY_TABLE[name] as Record<string, unknown>[]).map(({ id: _id, ...r }) => r));
+    }
+  })().catch((e) => { ready = null; throw e; });
+  return ready;
+}
+
 export async function listTable(t: TableName): Promise<Record<string, unknown>[]> {
   if (!hasDb()) return SEED_BY_TABLE[t] as Record<string, unknown>[];
+  await ensureSchema();
   const def = TABLES[t];
   const rows = await sql().query(`SELECT * FROM ${t} ORDER BY ${def.order}`);
   return t === "price_indices" ? rows.map((r) => ({ ...r, value: Number(r.value) })) : rows;
