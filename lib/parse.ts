@@ -34,19 +34,44 @@ const GPZ_COLS: Record<keyof Omit<GpzRow, "row">, Matcher> = {
   quantity: [/количеств/i, /объ[её]м/i],
   region: [/окато/i, /регион/i],
   category: [/категори/i],
-  ws: [/\bws\b/i, /код\s*ws/i],
+  ws: [/\bws\b/i, /код\s*ws/i, /код\s+услуг/i, /услуг\S* \/ код$/i],
 };
 const REPORT_COLS: Record<string, Matcher> = {
   lot: GPZ_COLS.lot,
   procId: GPZ_COLS.procId,
   status: [/статус/i, /состояни/i],
-  priceNoVat: [/цен\S*.*без\s*ндс/i, /сумм\S*.*без\s*ндс/i, /стоимост\S*.*без\s*ндс/i],
-  priceWithVat: [/цен\S*\s+договор/i, /сумм\S*\s+договор/i, /стоимост\S*\s+договор/i],
+  // Сначала фактическая стоимость договора, затем предложение победителя, затем любая «цена без НДС» (кроме НМЦ)
+  priceNoVat: [
+    /(цен|сумм|стоимост)\S*\s+договор\S*(\s+документ\S*)?.*без\s*ндс/i,
+    /(стоимост|цен)\S*\s+предложени\S*.*без\s*ндс/i,
+    /цен\S*.*без\s*ндс/i, /сумм\S*.*без\s*ндс/i, /стоимост\S*.*без\s*ндс/i,
+  ],
+  priceWithVat: [
+    /(цен|сумм|стоимост)\S*\s+договор/i,
+    /(стоимост|цен)\S*\s+предложени\S*.*с\s*ндс/i,
+  ],
   vatRate: [/ставк\S*\s*ндс/i, /^ндс$/i, /ндс,?\s*%/i],
   quantity: GPZ_COLS.quantity,
   contractDate: [/дат\S*\s+(заключ|подпис)/i, /дат\S*\s+договор/i],
   ws: GPZ_COLS.ws,
 };
+
+const PRICE_EXCLUDE = [/начальн/i, /максимальн/i, /\bнмц/i, /валют/i, /эконом/i, /эффективн/i];
+const EXCLUDE: Record<string, RegExp[]> = {
+  priceNoVat: PRICE_EXCLUDE,
+  priceWithVat: [...PRICE_EXCLUDE, /без\s*ндс/i],
+  subject: [/окпд/i],
+  quantity: [/заяв/i, /участник/i, /предложени/i],
+  status: [/договорн/i],
+};
+
+const isNumberingRow = (row: unknown[], width: number) =>
+  row.filter((v) => v != null && v !== "").length > 3 &&
+  row.every((v, i) => v == null || v === "" || Number(v) === i + 1 || (Number.isFinite(Number(v)) && Number(v) <= width + 10));
+
+/** Строка данных: есть даты или крупные числа (суммы, ID) — в шапке такого не бывает */
+const isDataRow = (row: unknown[]) =>
+  row.filter((v) => v instanceof Date || (typeof v === "number" && Math.abs(v) > 1000)).length >= 2;
 
 /** Читает лист с многоуровневой шапкой: объединяет уровни через « / » с учётом объединённых ячеек */
 export function readSheet(buf: ArrayBuffer): { headers: string[]; rows: unknown[][]; firstDataRow: number } {
@@ -62,10 +87,13 @@ export function readSheet(buf: ArrayBuffer): { headers: string[]; rows: unknown[
   }
   // Шапка: строки до первой строки, похожей на данные (в шапке почти нет чисел)
   const all = [...Object.values(GPZ_COLS), ...Object.values(REPORT_COLS)].flat();
+  // Шапка заканчивается перед строкой нумерации колонок или первой строкой с данными
   let lastHeader = -1;
   for (let r = 0; r < Math.min(grid.length, 15); r++) {
-    const cells = (grid[r] ?? []).filter((c) => c != null && c !== "");
-    if (cells.some((c) => typeof c === "string" && all.some((re) => re.test(c)))) lastHeader = r;
+    const row = grid[r] ?? [];
+    if (lastHeader >= 0 && (isNumberingRow(row, row.length) || isDataRow(row))) break;
+    const hits = row.filter((c) => typeof c === "string" && all.some((re) => re.test(c))).length;
+    if (hits >= (lastHeader < 0 ? 2 : 1)) lastHeader = r;
   }
   if (lastHeader < 0) throw new Error("Не найдена шапка таблицы (нет колонок ОКПД2, ID процедуры, номера лота и т. п.)");
   let firstHeader = lastHeader;
@@ -82,8 +110,7 @@ export function readSheet(buf: ArrayBuffer): { headers: string[]; rows: unknown[
   });
   let first = lastHeader + 1;
   // Пропуск строки с нумерацией колонок «1, 2, 3 …»
-  const numRow = grid[first] ?? [];
-  if (numRow.filter((v) => v != null).length > 3 && numRow.every((v, i) => v == null || Number(v) === i + 1 || Number(v) <= width)) first++;
+  if (isNumberingRow(grid[first] ?? [], width)) first++;
   return { headers, rows: grid.slice(first), firstDataRow: first + 1 };
 }
 
@@ -101,8 +128,7 @@ export function mapColumns(headers: string[], kind: "gpz" | "report") {
   const spec = kind === "gpz" ? GPZ_COLS : REPORT_COLS;
   const out: Record<string, number> = {};
   for (const [k, m] of Object.entries(spec)) {
-    const exclude = k === "priceWithVat" ? [/без\s*ндс/i] : k === "subject" ? [/окпд/i] : [];
-    out[k] = findCol(headers, m, exclude);
+    out[k] = findCol(headers, m, EXCLUDE[k] ?? []);
   }
   return out;
 }
