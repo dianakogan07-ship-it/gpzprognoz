@@ -3,6 +3,7 @@ import type { ForecastResult } from "./forecast";
 import type { PriceIndex, Source } from "./types";
 import { VAT_RATES } from "./seed";
 import { normOkpd2, toNumber } from "./normalize";
+import { KIND_LABEL, MONTHS, coefToPercent } from "./indexFormat";
 
 const yesNo = (b: boolean | null) => (b == null ? "не определено" : b ? "да" : "нет");
 
@@ -40,40 +41,91 @@ export function forecastWorkbook(res: ForecastResult, sources: Source[], targetY
   return wb;
 }
 
-const INDEX_HEADERS = ["Вид (to_december / forecast / cpi)", "ОКПД2 или раздел ОКВЭД2", "Год", "Месяц заключения (для to_december)", "Коэффициент (1,12 = +12%)", "Код источника", "Утверждён (да/нет)", "Примечание"];
+const INDEX_HEADERS = ["Тип индекса", "Код ОКПД2/ОКВЭД2", "Год", "Месяц", "Рост, %", "Источник", "Утверждено (Да/Нет)", "Примечание"];
+const KIND_BY_LABEL: Record<string, PriceIndex["kind"]> = Object.fromEntries(
+  (Object.entries(KIND_LABEL) as [PriceIndex["kind"], string][]).flatMap(([k, l]) => [[l.toLowerCase(), k], [k, k]]),
+);
 
-export function indexTemplate(indices: PriceIndex[]): XLSX.WorkBook {
+/** Выгрузка индексов (или пустой шаблон) в формате для закупщика */
+export function indexTemplate(indices: PriceIndex[], sources: Source[] = []): XLSX.WorkBook {
   const wb = XLSX.utils.book_new();
-  const rows = indices.map((i) => [i.kind, i.key ?? "", i.year, i.month ?? "", i.value, i.source_code ?? "", i.approved ? "да" : "нет", i.note ?? ""]);
+  const srcName = (code: string | null) => (code ? sources.find((s) => s.code === code)?.name ?? code : "");
+  const rows = indices.map((i) => [
+    KIND_LABEL[i.kind], i.key ?? "", i.year, i.month ? MONTHS[i.month - 1] : "", coefToPercent(i.value),
+    srcName(i.source_code), i.approved ? "Да" : "Нет", i.note ?? "",
+  ]);
   const ws = XLSX.utils.aoa_to_sheet([INDEX_HEADERS, ...rows]);
-  ws["!cols"] = [22, 22, 8, 14, 14, 16, 12, 60].map((wch) => ({ wch }));
+  ws["!cols"] = [22, 18, 8, 12, 10, 50, 18, 60].map((wch) => ({ wch }));
   XLSX.utils.book_append_sheet(wb, ws, "Индексы");
+  const help = XLSX.utils.aoa_to_sheet([
+    ["Колонка", "Как заполнять"],
+    ["Тип индекса", "Рост по отрасли / Общая инфляция / Пересчёт до декабря"],
+    ["Код ОКПД2/ОКВЭД2", "Код ОКПД2 (например, 43 или 43.2) или буква раздела ОКВЭД2 (например, F). Для общей инфляции не заполняется"],
+    ["Год", "Для роста по отрасли и инфляции — год прогноза; для пересчёта — год заключения договоров"],
+    ["Месяц", "Только для пересчёта до декабря: месяц заключения договора (название или число 1–12)"],
+    ["Рост, %", "Например, 12 — рост на 12 %; −2 — снижение на 2 %"],
+    ["Источник", "Название или код источника из справочника источников"],
+    ["Утверждено (Да/Нет)", "Нет — индекс помечается «Нужна проверка»"],
+  ]);
+  help["!cols"] = [{ wch: 22 }, { wch: 100 }];
+  XLSX.utils.book_append_sheet(wb, help, "Как заполнять");
   return wb;
 }
 
-export function parseIndexFile(buf: ArrayBuffer): { rows: Omit<PriceIndex, "id">[]; errors: string[] } {
+export interface IndexParseError { line: number; message: string }
+
+function parseMonth(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = toNumber(v);
+  if (n != null) return n;
+  const s = String(v).trim().toLowerCase();
+  const i = MONTHS.findIndex((m) => s.startsWith(m.slice(0, 3)));
+  return i >= 0 ? i + 1 : NaN;
+}
+
+/**
+ * Чтение файла индексов. Понимает новый формат (русские колонки, рост в %)
+ * и старый (kind / key / коэффициент, коды источников) — по заголовку первой колонки.
+ */
+export function parseIndexFile(buf: ArrayBuffer, sources: Source[] = []): { rows: Omit<PriceIndex, "id">[]; errors: IndexParseError[] } {
   const wb = XLSX.read(buf, { type: "array" });
   const grid = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: null });
+  const header = String(grid[0]?.[0] ?? "").toLowerCase();
+  const legacy = /^вид|^kind/.test(header);
+  const valueHeader = String(grid[0]?.[4] ?? "").toLowerCase();
+  const valueIsPercent = !legacy || /%|рост/.test(valueHeader) && !/коэфф/.test(valueHeader);
   const rows: Omit<PriceIndex, "id">[] = [];
-  const errors: string[] = [];
+  const errors: IndexParseError[] = [];
+  const findSource = (v: unknown) => {
+    const s = String(v ?? "").trim();
+    if (!s) return null;
+    const hit = sources.find((x) => x.code.toLowerCase() === s.toLowerCase() || x.name.toLowerCase() === s.toLowerCase());
+    return hit ? hit.code : sources.length ? undefined : s;
+  };
   grid.slice(1).forEach((r, i) => {
     if (!r || r.every((v) => v == null || v === "")) return;
     const line = i + 2;
-    const kind = String(r[0] ?? "").trim() as PriceIndex["kind"];
-    if (!["to_december", "forecast", "cpi"].includes(kind)) return void errors.push(`Строка ${line}: неизвестный вид «${r[0]}»`);
+    const err = (message: string) => void errors.push({ line, message });
+    const kind = KIND_BY_LABEL[String(r[0] ?? "").trim().toLowerCase()];
+    if (!kind) return err(`неизвестный тип индекса «${r[0] ?? ""}»`);
     const rawKey = String(r[1] ?? "").trim();
     const key = !rawKey ? null : /^[A-Za-z]$/.test(rawKey) ? rawKey.toUpperCase() : normOkpd2(rawKey);
     const year = toNumber(r[2]);
-    const month = toNumber(r[3]);
-    const value = toNumber(r[4]);
-    if (!year) return void errors.push(`Строка ${line}: не указан год`);
-    if (!value || value <= 0) return void errors.push(`Строка ${line}: неверный коэффициент`);
-    if (kind === "to_december" && (!month || month < 1 || month > 12)) return void errors.push(`Строка ${line}: для to_december нужен месяц 1–12`);
-    if (kind !== "cpi" && !key) return void errors.push(`Строка ${line}: не указан ОКПД2 / раздел ОКВЭД2`);
+    const month = parseMonth(r[3]);
+    const raw = toNumber(String(r[4] ?? "").replace("−", "-").replace("%", ""));
+    if (!year) return err("не указан год");
+    if (raw == null) return err("не указан рост, %");
+    const value = valueIsPercent ? 1 + raw / 100 : raw > 3 ? 1 + raw / 100 : raw;
+    if (value <= 0) return err("рост не может быть меньше −100 %");
+    if (kind === "to_december" && (!month || month < 1 || month > 12)) return err("для пересчёта до декабря нужен месяц");
+    if (kind !== "cpi" && !key) return err("не указан код ОКПД2/ОКВЭД2");
+    if (rawKey && kind !== "cpi" && !key) return err(`неверный код «${rawKey}»`);
+    const source_code = findSource(r[5]);
+    if (source_code === undefined) return err(`источник «${r[5]}» не найден в справочнике источников`);
     rows.push({
       kind, key: kind === "cpi" ? null : key, year, month: kind === "to_december" ? month : null,
-      value: value > 3 ? 1 + value / 100 : value, // «12» трактуется как +12%
-      source_code: r[5] ? String(r[5]).trim() : null,
+      value: Math.round(value * 100000) / 100000,
+      source_code,
       approved: /^(да|yes|true|1)$/i.test(String(r[6] ?? "").trim()),
       note: r[7] ? String(r[7]) : null,
     });

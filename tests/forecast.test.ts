@@ -98,11 +98,50 @@ describe("вспомогательное", () => {
     expect(m.value).toBe(110);
   });
   it("обезличивание", () => expect(anonymize("Аренда ООО «Ромашка» ИНН 7700000000")).toBe("Аренда"));
-  it("шаблон индексов читается обратно", () => {
-    const buf = XLSX.write(indexTemplate(ref.indices), { type: "array", bookType: "xlsx" }) as ArrayBuffer;
-    const { rows, errors } = parseIndexFile(buf);
+  it("выгрузка индексов читается обратно", () => {
+    const buf = XLSX.write(indexTemplate(ref.indices, SEED.sources), { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    const { rows, errors } = parseIndexFile(buf, SEED.sources);
     expect(errors).toEqual([]);
     expect(rows).toHaveLength(3);
-    expect(rows.find((x) => x.kind === "to_december")).toMatchObject({ key: "68", month: 2, value: 1.05, approved: true });
+    expect(rows.find((x) => x.kind === "to_december")).toMatchObject({ key: "68", month: 2, value: 1.05, approved: true, source_code: "ROSSTAT_ICP" });
+    expect(rows.find((x) => x.kind === "cpi")).toMatchObject({ key: null, value: 1.04, approved: false });
+  });
+  it("новый формат: проценты, названия месяцев, ошибки по строкам", () => {
+    const buf = toBuf([
+      ["Тип индекса", "Код ОКПД2/ОКВЭД2", "Год", "Месяц", "Рост, %", "Источник", "Утверждено (Да/Нет)", "Примечание"],
+      ["Рост по отрасли", "43", 2027, null, 12, "Минэкономразвития — прогноз социально-экономического развития (индексы-дефляторы)", "Да", null],
+      ["Рост по отрасли", "F", 2027, null, "−2", "MER_FORECAST", "Нет", null],
+      ["Пересчёт до декабря", "68.20", 2026, "февраль", 3.5, null, null, null],
+      ["Пересчёт до декабря", "68.20", 2026, null, 3.5, null, null, null],
+      ["Что-то", "43", 2027, null, 1, null, null, null],
+      ["Общая инфляция", null, 2027, null, 4, "Неизвестный", null, null],
+    ]);
+    const { rows, errors } = parseIndexFile(buf, SEED.sources);
+    expect(rows).toEqual([
+      expect.objectContaining({ kind: "forecast", key: "43", value: 1.12, approved: true, source_code: "MER_FORECAST" }),
+      expect.objectContaining({ kind: "forecast", key: "F", value: 0.98, approved: false }),
+      expect.objectContaining({ kind: "to_december", key: "68.20", month: 2, value: 1.035 }),
+    ]);
+    expect(errors.map((e) => e.line)).toEqual([5, 6, 7]);
+  });
+  it("старый формат (kind, key, коэффициент) по-прежнему загружается", () => {
+    const buf = toBuf([
+      ["Вид (to_december / forecast / cpi)", "ОКПД2 или раздел ОКВЭД2", "Год", "Месяц заключения (для to_december)", "Коэффициент (1,12 = +12%)", "Код источника", "Утверждён (да/нет)", "Примечание"],
+      ["forecast", "43", 2027, null, 1.12, "MER_FORECAST", "да", null],
+      ["to_december", "68", 2026, 2, 1.05, "ROSSTAT_ICP", "нет", null],
+    ]);
+    const { rows, errors } = parseIndexFile(buf, SEED.sources);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual([
+      expect.objectContaining({ kind: "forecast", key: "43", value: 1.12, approved: true }),
+      expect.objectContaining({ kind: "to_december", month: 2, value: 1.05 }),
+    ]);
+  });
+  it("формат роста в процентах", async () => {
+    const { formatGrowth, percentToCoef, coefToPercent } = await import("@/lib/indexFormat");
+    expect(formatGrowth(1.04)).toBe("+4,0 %");
+    expect(formatGrowth(0.98)).toBe("−2,0 %");
+    expect(percentToCoef(4.5)).toBe(1.045);
+    expect(coefToPercent(1.045)).toBe(4.5);
   });
 });

@@ -96,7 +96,7 @@ export async function deleteRow(t: TableName, pk: unknown) {
 export async function upsertRows(t: TableName, rows: Record<string, unknown>[]) {
   const def = TABLES[t];
   const db = sql();
-  let n = 0;
+  let inserted = 0, updated = 0;
   for (const row of rows) {
     const { cols, vals } = pick(t, row);
     if (!cols.length) continue;
@@ -107,10 +107,10 @@ export async function upsertRows(t: TableName, rows: Record<string, unknown>[]) 
       : natural ? ` ON CONFLICT (${def.pk}) DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}`
       : t === "repeat_rules" ? ` ON CONFLICT (kind, prefix) DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}`
       : " ON CONFLICT DO NOTHING";
-    await db.query(`INSERT INTO ${t} (${cols.join(", ")}) VALUES (${ph})${conflict}`, vals);
-    n++;
+    const res = await db.query(`INSERT INTO ${t} (${cols.join(", ")}) VALUES (${ph})${conflict} RETURNING (xmax = 0) AS inserted`, vals);
+    if (res[0]?.inserted) inserted++; else if (res.length) updated++;
   }
-  return n;
+  return { saved: inserted + updated, inserted, updated };
 }
 
 export { SEED_BY_TABLE };

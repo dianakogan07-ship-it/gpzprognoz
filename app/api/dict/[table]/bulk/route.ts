@@ -11,6 +11,6 @@ export async function POST(req: NextRequest, { params }: { params: { table: stri
   return handle(async () => {
     const { rows } = (await req.json()) as { rows: Record<string, unknown>[] };
     if (!Array.isArray(rows)) throw new Error("Ожидается { rows: [...] }");
-    return { saved: await upsertRows(t, rows) };
+    return upsertRows(t, rows);
   }, true);
 }
