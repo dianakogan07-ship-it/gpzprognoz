@@ -30,7 +30,9 @@ describe("разбор подписей", () => {
     expect(indicatorOf("Добыча угля (05)")).toBeNull();
     expect(toCoef("104,5")).toEqual({ value: 1.045 });
     expect(toCoef("99,9").value).toBe(0.999);
-    expect(toCoef("4,5").value).toBeNull();
+    expect(toCoef("4,5").value).toBe(1.045); // прирост в %
+    expect(toCoef("-2,3").value).toBe(0.977);
+    expect(toCoef("450").value).toBeNull();
   });
   it("коды из поля ввода в предпросмотре", () => {
     expect(parseCodeInput("06+09")).toEqual(["06", "09"]);
@@ -109,6 +111,29 @@ describe("прогноз МЭР в Excel", () => {
     expect(r["Раздел B"]).toMatchObject({ indicator: "icp", value: 1.037, deflator: 1.04, page: "лист «Табл.3»" });
     expect(r["Раздел F"]).toMatchObject({ indicator: "deflator", value: 1.051 });
     expect(r["ИПЦ"]).toMatchObject({ value: 1.04, problems: [] });
+  });
+});
+
+describe("прогноз МЭР: варианты строками, ИПЦ приростом", () => {
+  it("берёт строку «базовый» под показателем и понимает «4,0» как +4 %", () => {
+    const ws = XLSX.utils.aoa_to_sheet([
+      ["ПРОГНОЗ СОЦИАЛЬНО-ЭКОНОМИЧЕСКОГО РАЗВИТИЯ РОССИЙСКОЙ ФЕДЕРАЦИИ НА 2027 ГОД И НА ПЛАНОВЫЙ ПЕРИОД 2028 И 2029 ГОДОВ"],
+      ["СЕНТЯБРЬ 2026 ГОДА"],
+      ["Таблица. Основные показатели прогноза"],
+      [null, "2025", "2026", "2027", "2028"],
+      ["Индекс потребительских цен на конец года, в % к декабрю"],
+      ["консервативный", null, null, 5.3, 4.0],
+      [null, 5.6, 6.8],
+      ["базовый", null, null, 4.0, 4.0],
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "1");
+    const res = parseMer(xlsxToPages(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer), 2027);
+    expect(res.title).toBe("Прогноз социально-экономического развития Российской Федерации на 2027 год и на плановый период 2028 и 2029 годов");
+    expect(res.approvedDate).toBe("сентябрь 2026");
+    expect(res.rows).toEqual([expect.objectContaining({ kind: "cpi", value: 1.04, problems: [] })]);
+    expect(res.rows[0].raw).toContain("базовый");
+    expect(res.warnings[0]).toContain("нет таблицы индексов цен производителей");
   });
 });
 

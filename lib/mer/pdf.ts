@@ -9,6 +9,11 @@ interface TextItem { str: string; transform: number[]; width: number; height: nu
 export async function pdfToPages(data: Uint8Array, keep?: (rowsText: string) => boolean): Promise<Page[]> {
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   if (typeof window !== "undefined") pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
+  else {
+    // На сервере обработчик подключаем заранее: pdf.js возьмёт его из globalThis и не будет искать файл сам
+    const g = globalThis as { pdfjsWorker?: unknown };
+    g.pdfjsWorker ??= await import("pdfjs-dist/legacy/build/pdf.worker.mjs");
+  }
   const doc = await pdfjs.getDocument({ data, isEvalSupported: false, useSystemFonts: false, disableFontFace: true, verbosity: 0 }).promise;
   const pages: Page[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
@@ -40,7 +45,8 @@ export function itemsToRows(items: TextItem[]): Page["rows"] {
       const last = cells[cells.length - 1];
       const gap = last ? it.x - last.right : Infinity;
       // Зазор меньше ширины пробела — продолжение того же текста
-      if (last && gap < it.h * 0.6 && !(isNum(last.text) && isNum(it.text))) {
+      // Числа склеиваем, только если они вплотную: «202» + «7» → «2027»
+      if (last && ((gap < it.h * 0.6 && !(isNum(last.text) && isNum(it.text))) || gap < it.h * 0.15)) {
         last.text += (gap > it.h * 0.15 ? " " : "") + it.text;
         last.right = it.x + it.w;
       } else cells.push({ text: it.text, x: 0, left: it.x, right: it.x + it.w, h: it.h });

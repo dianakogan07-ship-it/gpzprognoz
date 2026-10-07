@@ -160,6 +160,7 @@ function DataLinks({ kind, indices }: { kind: IndexKind; indices: PriceIndex[] }
               <a href={l.url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand hover:underline">{l.title} ↗</a>
               <span className="ml-2 text-xs text-slate-500">{d ? `последняя загрузка ${d}` : "ещё не загружали"}</span>
               <p className="text-xs text-slate-600">{l.description}</p>
+              <p className={`mt-0.5 text-xs ${l.file ? "text-slate-500" : "text-amber-800"}`}>{l.file ? "Как загрузить: " : "Важно: "}{l.howTo}</p>
             </li>
           );
         })}

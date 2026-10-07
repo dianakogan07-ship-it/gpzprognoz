@@ -115,12 +115,17 @@ const ownLabel = (s: string) => s.replace(/индекс\S*[-\s]*дефлятор
 const TABLE_TITLE = (t: string) => /цен\S*\s+производител/i.test(t) && /дефлятор/i.test(t);
 const OTHER_TITLE = (t: string) => /^(таблица|приложение|прогноз|основные|\d+\.\s)/i.test(t) && t.length > 25 && !TABLE_TITLE(t);
 
+/** «104,5» (индекс, % к прошлому году) и «4,5» (прирост, %) → 1,045 */
 export function toCoef(text: string): { value: number | null; problem?: string } {
   const v = toNum(text);
   if (!Number.isFinite(v)) return { value: null, problem: "значение не распознано" };
   if (v >= 50 && v <= 300) return { value: Math.round(v * 1000) / 100000 };
-  return { value: null, problem: `значение «${text}» не похоже на индекс в % к предыдущему году` };
+  if (v > -50 && v < 50) return { value: Math.round((100 + v) * 1000) / 100000 };
+  return { value: null, problem: `значение «${text}» не похоже на рост цен` };
 }
+
+/** Строка-вариант прогноза: «базовый», «консервативный» — показатель берётся из заголовка выше */
+const VARIANT = /^(базов\S*|консерв\S*|целев\S*)(\s+вариант)?$/i;
 
 /** Разбор документа МЭР: таблица ИЦП и дефляторов по видам деятельности + ИПЦ */
 export function parseMer(pages: Page[], targetYear: number): MerParseResult {
@@ -131,7 +136,9 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
   const head = cleanText(all.slice(0, 120).map((x) => rowText(x.r)).join(" "));
   const tm = head.match(/прогноз\S*\s+социально-экономического\s+развития[^.]{0,160}?плановый\s+период[^.]{0,30}?годов/i)
     ?? head.match(/прогноз\S*\s+социально-экономического\s+развития[^.]{0,160}?год\S*/i);
-  const title = tm ? cleanText(tm[0]).replace(/^прогноз\S*/i, "Прогноз") : null;
+  const caps = (t: string) => (t.replace(/[^А-ЯЁа-яё]/g, "").replace(/[а-яё]/g, "").length > t.replace(/[^А-ЯЁа-яё]/g, "").length / 2
+    ? t.toLowerCase().replace(/российской федерации/g, "Российской Федерации") : t);
+  const title = tm ? caps(cleanText(tm[0])).replace(/^прогноз\S*/i, "Прогноз") : null;
   const date = docText.match(/одобрен\S*[\s\S]{0,200}?(\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4}|\d{2}\.\d{2}\.\d{4})/i);
 
   // ---- Таблица ИЦП и дефляторов ----
@@ -139,7 +146,7 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
   let tablePage: string | null = null;
   const start = all.findIndex((x, i) => /цен\S*\s+производител|дефлятор/i.test(rowText(x.r)) && !hasAnyNumber(x.r)
     && TABLE_TITLE(rowText(x.r) + " " + (all[i + 1]?.pi === x.pi ? rowText(all[i + 1].r) : "")));
-  if (start < 0) warnings.push("Не найдена таблица «Прогноз индексов цен производителей и индексов-дефляторов по видам экономической деятельности»");
+  if (start < 0) warnings.push("В этом файле нет таблицы индексов цен производителей и индексов-дефляторов по видам деятельности — отраслевые индексы не загрузятся. МЭР публикует её отдельным файлом с таблицами (приложения к прогнозу); загрузите его тоже.");
   else {
     tablePage = pages[all[start].pi].label;
     if (!/базов/i.test(all.slice(start, start + 15).map((x) => rowText(x.r)).join(" ")) && !/базов/i.test(rowText(all[start].r))) {
@@ -226,7 +233,8 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
   if (cpi) rows.push(cpi);
   else warnings.push(`Не найден индекс потребительских цен на ${targetYear} год`);
 
-  return { title, approvedDate: date ? date[1] : null, targetYear, tablePage, rows, warnings };
+  const published = head.match(/(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*\s+20\d\d/i);
+  return { title, approvedDate: date ? date[1] : published ? published[0].toLowerCase() : null, targetYear, tablePage, rows, warnings };
 }
 
 /** ИПЦ: предпочтительно «в среднем за год», иначе «на конец года» */
@@ -243,10 +251,15 @@ function findCpi(pages: Page[], year: number): MerRow | null {
       if (h < 0) continue;
       const col = findColumn(rs, Math.max(0, h - 3), h + 3, year, page.tolerance ?? 14);
       if (!col) continue;
-      const label = labelOf(rs[i], col);
+      let label = labelOf(rs[i], col);
       if (!hasNumbers(rs[i], col)) { if (label) heading = label; continue; }
+      if (VARIANT.test(label)) {
+        if (!/^базов/i.test(label)) continue;
+        label = `${heading} (базовый)`;
+      }
+      if (!label) continue; // значения прошлых лет без подписи
       const isCpi = /потребительск\S*\s+цен|(^|[^а-яё])ипц($|[^а-яё])/i.test(label) || (/потребительск\S*\s+цен|(^|[^а-яё])ипц($|[^а-яё])/i.test(heading) && /(в среднем|на конец|декабр)/i.test(label));
-      if (!isCpi) { if (label) heading = ""; continue; }
+      if (!isCpi) { if (!/\(базовый\)$/.test(label)) heading = ""; continue; }
       const v = valueAt(rs[i], col);
       if (!v) continue;
       const c = toCoef(v);
@@ -255,7 +268,7 @@ function findCpi(pages: Page[], year: number): MerRow | null {
       if (!avg && !/на конец|декабр/i.test(label)) problems.push("не указано, среднегодовой это ИПЦ или на конец года");
       cands.push({ avg, row: {
         id: `cpi${cands.length}`, kind: "cpi", keys: [], codeText: "", indicator: null, value: c.value, deflator: null,
-        raw: cleanText(`${heading && !/потребительск/i.test(label) ? `${heading} → ` : ""}${text}`), page: page.label, problems,
+        raw: cleanText(`${heading && !label.startsWith(heading) && !/потребительск/i.test(label) ? `${heading} → ` : ""}${label.startsWith(heading) && heading ? `${heading} → ` : ""}${text}`), page: page.label, problems,
       } });
     }
   }
