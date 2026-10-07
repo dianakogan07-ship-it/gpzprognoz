@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { IconX } from "./Icons";
 
 export function Modal({ title, subtitle, onClose, children, footer, wide }: {
@@ -10,7 +11,11 @@ export function Modal({ title, subtitle, onClose, children, footer, wide }: {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  // Окно выводим поверх страницы, а не внутри блока, где нажата кнопка (иначе наследуются его стили)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-900/40 p-4 pt-[8vh]" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`w-full ${wide ? "max-w-6xl" : "max-w-xl"} rounded-xl bg-white shadow-xl`} role="dialog" aria-modal="true">
         <div className="flex items-start justify-between gap-4 px-6 pt-5">
@@ -24,5 +29,5 @@ export function Modal({ title, subtitle, onClose, children, footer, wide }: {
         {footer && <div className="flex flex-wrap justify-end gap-2 border-t border-slate-100 px-6 py-4">{footer}</div>}
       </div>
     </div>
-  );
+  , document.body);
 }

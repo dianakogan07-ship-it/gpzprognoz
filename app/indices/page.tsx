@@ -203,6 +203,7 @@ export default function IndicesPage() {
   const [busy, setBusy] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const canEdit = db === true;
 
   // Заменённые версии не показываем; новые версии, ждущие проверки, — рядом с действующими
@@ -248,6 +249,14 @@ export default function IndicesPage() {
     setBusy(false);
   }
 
+  // После загрузки прогноза МЭР — на вкладку отраслевых индексов, к значениям, ждущим проверки
+  async function afterMer(m: string) {
+    setNotice(m);
+    await reload();
+    setTabKind("forecast");
+    setOnlyPending(true);
+  }
+
   const openNew = (kind: IndexKind = tabKind, key = "") =>
     setForm({ key, year: kind === "to_december" ? target - 1 : target, month: 1, percent: "", source_code: "", note: "", approved: false });
   const openEdit = (ix: PriceIndex) => setForm({
@@ -266,11 +275,17 @@ export default function IndicesPage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <p className="hint">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={async (m) => { setMsg(m); await reload(); }} />}
+            {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
             {canEdit && <UploadButton busy={busy} onFile={upload} />}
             <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
           </div>
         </div>
+        {notice && (
+          <div className="flex items-start justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            <span>{notice}</span>
+            <button className="text-emerald-700 hover:underline" onClick={() => setNotice(null)}>Скрыть</button>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <button className="text-brand underline-offset-2 hover:underline" onClick={() => downloadWorkbook(indexTemplate([], reference?.sources), "Шаблон индексов.xlsx")}>Скачать шаблон</button>
           {db === false && <span className="text-amber-700">База данных не подключена — индексы доступны только для просмотра.</span>}
@@ -388,7 +403,7 @@ export default function IndicesPage() {
             {canEdit ? (
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить</button>
-                {tabKind !== "to_december" && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={async (m) => { setMsg(m); await reload(); }} />}
+                {tabKind !== "to_december" && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
                 <UploadButton busy={busy} onFile={upload} />
               </div>
             ) : db === false && <p className="mt-3 text-sm text-amber-700">Чтобы добавлять индексы, подключите базу данных.</p>}

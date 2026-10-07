@@ -124,6 +124,7 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
             <button className="btn-sec" onClick={() => setResult(null)}>Отмена</button>
             <button className="btn" disabled={busy || !ready.length || !doc.title.trim()} onClick={save}>{busy ? "Сохранение…" : `Сохранить на проверку (${ready.length})`}</button>
           </>}>
+          {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">Не удалось сохранить: {error}</p>}
           {result.warnings.length > 0 && (
             <ul className="space-y-0.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">{result.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
           )}
@@ -174,7 +175,6 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
               </tbody>
             </table>
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
         </Modal>
       )}
     </>
