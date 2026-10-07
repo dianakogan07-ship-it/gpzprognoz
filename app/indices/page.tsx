@@ -142,30 +142,33 @@ function IndexForm({ tab, draft, reference, onClose, onSaved }: {
 }
 
 /* ---------- Где взять данные ---------- */
-function DataLinks({ kind, indices }: { kind: IndexKind; indices: PriceIndex[] }) {
-  const links = DATA_LINKS[kind];
-  if (!links.length) return null;
+function DataLinks({ indices }: { indices: PriceIndex[] }) {
   const lastLoad = (codes: string[]) => {
     const ts = indices.filter((i) => i.source_code && codes.includes(i.source_code) && i.loaded_at).map((i) => Date.parse(i.loaded_at!)).filter(Number.isFinite);
     return ts.length ? new Date(Math.max(...ts)).toLocaleDateString("ru-RU") : null;
   };
+  const groups: [string, IndexKind][] = [["Рост цен по отраслям и общая инфляция", "forecast"], ["Пересчёт цен внутри года", "to_december"]];
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-      <p className="text-sm font-semibold text-slate-900">Где взять данные</p>
-      <ul className="mt-2 space-y-2">
-        {links.map((l) => {
-          const d = lastLoad(l.sourceCodes);
-          return (
-            <li key={l.url} className="text-sm">
-              <a href={l.url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand hover:underline">{l.title} ↗</a>
-              <span className="ml-2 text-xs text-slate-500">{d ? `последняя загрузка ${d}` : "ещё не загружали"}</span>
-              <p className="text-xs text-slate-600">{l.description}</p>
-              <p className={`mt-0.5 text-xs ${l.file ? "text-slate-500" : "text-amber-800"}`}>{l.file ? "Как загрузить: " : "Важно: "}{l.howTo}</p>
-            </li>
-          );
-        })}
-      </ul>
-      <p className="hint mt-2">{DATA_LINKS_HINT}</p>
+    <div className="space-y-5">
+      {groups.map(([title, kind]) => (
+        <div key={kind}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
+          <ul className="mt-2 space-y-3">
+            {DATA_LINKS[kind].map((l) => {
+              const d = lastLoad(l.sourceCodes);
+              return (
+                <li key={l.url} className="text-sm">
+                  <a href={l.url} target="_blank" rel="noopener noreferrer" className="font-medium text-brand hover:underline">{l.title} ↗</a>
+                  <span className="ml-2 text-xs text-slate-500">{d ? `последняя загрузка ${d}` : "ещё не загружали"}</span>
+                  <p className="text-xs text-slate-600">{l.description}</p>
+                  <p className={`mt-0.5 text-xs ${l.file ? "text-slate-500" : "text-amber-800"}`}>{l.file ? "Как загрузить: " : "Важно: "}{l.howTo}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+      <p className="hint">{DATA_LINKS_HINT}</p>
     </div>
   );
 }
@@ -199,6 +202,7 @@ export default function IndicesPage() {
   const [report, setReport] = useState<UploadReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
+  const [showSources, setShowSources] = useState(false);
   const canEdit = db === true;
 
   // Заменённые версии не показываем; новые версии, ждущие проверки, — рядом с действующими
@@ -255,11 +259,12 @@ export default function IndicesPage() {
   return (
     <div className="space-y-4">
       <div className="card space-y-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h1 className="text-xl font-semibold text-slate-900">Индексы роста цен</h1>
+          <button className="text-sm font-medium text-brand hover:underline" onClick={() => setShowSources(true)}>Где взять данные</button>
+        </div>
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-semibold text-slate-900">Индексы роста цен</h1>
-            <p className="hint mt-1">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
-          </div>
+          <p className="hint">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
           <div className="flex flex-wrap items-center gap-2">
             {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={async (m) => { setMsg(m); await reload(); }} />}
             {canEdit && <UploadButton busy={busy} onFile={upload} />}
@@ -374,13 +379,12 @@ export default function IndicesPage() {
           )}
         </div>
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
-        {(rows.length > 0 || onlyPending) && <DataLinks kind={tabKind} indices={indices} />}
 
         {rows.length === 0 && !onlyPending ? (
           <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center">
             <p className="font-medium text-slate-900">Индексов пока нет</p>
             <p className="hint mx-auto mt-1 max-w-2xl">{tab.empty}</p>
-            <div className="mx-auto mt-4 max-w-2xl text-left"><DataLinks kind={tabKind} indices={indices} /></div>
+            <button className="mt-2 text-sm text-brand hover:underline" onClick={() => setShowSources(true)}>Где взять данные</button>
             {canEdit ? (
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить</button>
@@ -449,6 +453,12 @@ export default function IndicesPage() {
         )}
       </div>
 
+      {showSources && (
+        <Modal title="Где взять данные" onClose={() => setShowSources(false)}
+          footer={<button className="btn" onClick={() => setShowSources(false)}>Понятно</button>}>
+          <DataLinks indices={indices} />
+        </Modal>
+      )}
       {form && reference && (
         <IndexForm tab={tab} draft={form} reference={reference} onClose={() => setForm(null)}
           onSaved={async (m) => { setForm(null); setMsg(m); await reload(); }} />
