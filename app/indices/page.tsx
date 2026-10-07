@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, useReference } from "@/components/useReference";
 import { Modal } from "@/components/Modal";
 import { IconCheck, IconDownload, IconEdit, IconPlus, IconTrash, IconUpload } from "@/components/Icons";
@@ -22,7 +22,7 @@ const tabsFor = (target: number): Tab[] => [
     empty: "Отраслевые индексы делают прогноз точнее: цены на стройматериалы, ИТ-услуги или топливо растут по-разному. Без них все позиции считаются по общей инфляции и требуют согласования." },
   { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
     empty: "Общая инфляция — запасной вариант: она применяется, когда для отрасли нет своего индекса. Без неё такие позиции останутся без пересчёта на следующий год." },
-  { kind: "to_december", title: "Пересчёт цен внутри года", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
+  { kind: "to_december", title: "Перерасчёт цен по месяцам", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
     empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня последнего месяца с данными Росстата, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
 ];
 
@@ -149,7 +149,7 @@ function DataLinks({ indices }: { indices: PriceIndex[] }) {
     const ts = indices.filter((i) => i.source_code && codes.includes(i.source_code) && i.loaded_at).map((i) => Date.parse(i.loaded_at!)).filter(Number.isFinite);
     return ts.length ? new Date(Math.max(...ts)).toLocaleDateString("ru-RU") : null;
   };
-  const groups: [string, IndexKind][] = [["Рост цен по отраслям и общая инфляция", "forecast"], ["Пересчёт цен внутри года", "to_december"]];
+  const groups: [string, IndexKind][] = [["Рост цен по отраслям и общая инфляция", "forecast"], ["Перерасчёт цен по месяцам", "to_december"]];
   return (
     <div className="space-y-5">
       {groups.map(([title, kind]) => (
@@ -232,6 +232,49 @@ export default function IndicesPage() {
     .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0)
       || (a.pending_of ? 1 : 0) - (b.pending_of ? 1 : 0));
   const sourceOf = (code: string | null) => (code ? reference?.sources.find((s) => s.code === code) : undefined);
+  // Пересчёт по месяцам: индексы одной отрасли — одной строкой с раскрытием
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleGroup = (k: string) => setExpanded((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const groups: { key: string; items: PriceIndex[] }[] = [];
+  if (tabKind === "to_december") {
+    const byKey = new Map<string, PriceIndex[]>();
+    for (const ix of rows) { const k = ix.key ?? ""; byKey.get(k)?.push(ix) ?? byKey.set(k, [ix]); }
+    for (const [key, items] of byKey) groups.push({ key, items });
+  }
+  const renderRow = (ix: PriceIndex, nested = false) => {
+    const src = sourceOf(ix.source_code);
+    return (
+                  <tr key={ix.id} className={nested ? "bg-slate-50/60" : ""}>
+                    {canEdit && <td><input type="checkbox" checked={selected.has(ix.id)} onChange={() => {
+                      const s = new Set(selected); if (s.has(ix.id)) s.delete(ix.id); else s.add(ix.id); setSelected(s);
+                    }} /></td>}
+                    {tab.kind !== "cpi" && <td className={nested ? "pl-8 text-slate-500" : ""}>{nested ? "" : reference ? industryLabel(ix.key, reference) : ix.key}</td>}
+                    {tab.kind === "to_december" && <td>{ix.month ? MONTHS[ix.month - 1] : "—"}</td>}
+                    <td>{ix.year}</td>
+                    <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
+                    <td>{src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{src.name}</a> : ix.source_code ?? <span className="text-slate-400">не указан</span>}</td>
+                    <td>
+                      {ix.pending_of ? <span className="inline-flex whitespace-nowrap rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 ring-1 ring-sky-200">Новая версия</span> : <StatusBadge approved={ix.approved} />}
+                      {ix.change_note && <p className="mt-1 text-xs text-slate-500">{ix.change_note}</p>}
+                    </td>
+                    <td className="max-w-xs text-xs text-slate-600">
+                      {ix.note && <p>{ix.note}</p>}
+                      {ix.doc_title && <p title={ix.raw_line ?? undefined} className="cursor-help">
+                        {ix.indicator === "icp" ? "ИЦП" : ix.indicator === "deflator" ? "Дефлятор" : ""}{ix.indicator ? " · " : ""}
+                        {ix.doc_title}{ix.doc_date ? `, одобрен ${ix.doc_date}` : ""}{ix.doc_page ? `, ${ix.doc_page}` : ""}
+                        {ix.ref_deflator ? ` · дефлятор справочно ${formatGrowth(ix.ref_deflator)}` : ""}
+                      </p>}
+                    </td>
+                    {canEdit && (
+                      <td className="whitespace-nowrap text-right">
+                        {!ix.approved && <button className="btn-sec mr-1 !px-2.5 !py-1" disabled={busy} onClick={() => approve([ix.id])}>Утвердить</button>}
+                        <button className="btn-icon mr-1" title="Изменить" onClick={() => openEdit(ix)}><IconEdit width={16} height={16} /></button>
+                        <button className="btn-icon" title="Удалить" onClick={() => remove(ix)}><IconTrash width={16} height={16} /></button>
+                      </td>
+                    )}
+                  </tr>
+    );
+  };
 
   useEffect(() => setSelected(new Set()), [tabKind, onlyPending, year]);
 
@@ -397,7 +440,9 @@ export default function IndicesPage() {
 
         <div className="flex flex-wrap gap-1 border-b border-slate-200">
           {tabs.map((t) => {
-            const n = indices.filter((i) => i.kind === t.kind && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved)).length;
+            const list = indices.filter((i) => i.kind === t.kind && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved));
+            // По месяцам считаем отрасли, а не строки
+            const n = t.kind === "to_december" ? new Set(list.map((i) => i.key)).size : list.length;
             return (
               <button key={t.kind} onClick={() => { setTabKind(t.kind); setYearSel(null); }}
                 className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${t.kind === tabKind ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
@@ -469,38 +514,37 @@ export default function IndicesPage() {
               {rows.length === 0 && (
                 <tr><td colSpan={9} className="py-8 text-center text-slate-500">На этой вкладке нет индексов, ждущих проверки</td></tr>
               )}
-              {rows.map((ix) => {
-                const src = sourceOf(ix.source_code);
+              {tabKind !== "to_december" ? rows.map((ix) => renderRow(ix)) : groups.map((g) => {
+                if (g.items.length === 1) return renderRow(g.items[0]);
+                const open = expanded.has(g.key);
+                const vals = g.items.map((i) => i.value);
+                const pending = g.items.filter((i) => !i.approved);
+                const src = sourceOf(g.items[0].source_code);
+                const ids = g.items.map((i) => i.id);
+                const allSel = ids.every((id) => selected.has(id));
                 return (
-                  <tr key={ix.id}>
-                    {canEdit && <td><input type="checkbox" checked={selected.has(ix.id)} onChange={() => {
-                      const s = new Set(selected); if (s.has(ix.id)) s.delete(ix.id); else s.add(ix.id); setSelected(s);
-                    }} /></td>}
-                    {tab.kind !== "cpi" && <td>{reference ? industryLabel(ix.key, reference) : ix.key}</td>}
-                    {tab.kind === "to_december" && <td>{ix.month ? MONTHS[ix.month - 1] : "—"}</td>}
-                    <td>{ix.year}</td>
-                    <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
-                    <td>{src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{src.name}</a> : ix.source_code ?? <span className="text-slate-400">не указан</span>}</td>
-                    <td>
-                      {ix.pending_of ? <span className="inline-flex whitespace-nowrap rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 ring-1 ring-sky-200">Новая версия</span> : <StatusBadge approved={ix.approved} />}
-                      {ix.change_note && <p className="mt-1 text-xs text-slate-500">{ix.change_note}</p>}
-                    </td>
-                    <td className="max-w-xs text-xs text-slate-600">
-                      {ix.note && <p>{ix.note}</p>}
-                      {ix.doc_title && <p title={ix.raw_line ?? undefined} className="cursor-help">
-                        {ix.indicator === "icp" ? "ИЦП" : ix.indicator === "deflator" ? "Дефлятор" : ""}{ix.indicator ? " · " : ""}
-                        {ix.doc_title}{ix.doc_date ? `, одобрен ${ix.doc_date}` : ""}{ix.doc_page ? `, ${ix.doc_page}` : ""}
-                        {ix.ref_deflator ? ` · дефлятор справочно ${formatGrowth(ix.ref_deflator)}` : ""}
-                      </p>}
-                    </td>
-                    {canEdit && (
-                      <td className="whitespace-nowrap text-right">
-                        {!ix.approved && <button className="btn-sec mr-1 !px-2.5 !py-1" disabled={busy} onClick={() => approve([ix.id])}>Утвердить</button>}
-                        <button className="btn-icon mr-1" title="Изменить" onClick={() => openEdit(ix)}><IconEdit width={16} height={16} /></button>
-                        <button className="btn-icon" title="Удалить" onClick={() => remove(ix)}><IconTrash width={16} height={16} /></button>
-                      </td>
-                    )}
-                  </tr>
+                  <Fragment key={g.key}>
+                    <tr className="cursor-pointer hover:bg-slate-50" onClick={() => toggleGroup(g.key)}>
+                      {canEdit && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={allSel} onChange={() => {
+                        const s = new Set(selected); ids.forEach((id) => (allSel ? s.delete(id) : s.add(id))); setSelected(s);
+                      }} /></td>}
+                      <td><span className={`mr-2 inline-block text-slate-400 transition ${open ? "rotate-90" : ""}`}>›</span>{reference ? industryLabel(g.key, reference) : g.key}</td>
+                      <td className="whitespace-nowrap text-slate-600">{g.items.length} {plural(g.items.length, "месяц", "месяца", "месяцев")}</td>
+                      <td>{g.items[0].year}</td>
+                      <td className="whitespace-nowrap text-right font-medium text-slate-900">{formatGrowth(Math.min(...vals))} … {formatGrowth(Math.max(...vals))}</td>
+                      <td>{src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline" onClick={(e) => e.stopPropagation()}>{src.name}</a> : g.items[0].source_code ?? <span className="text-slate-400">не указан</span>}</td>
+                      <td>{pending.length
+                        ? <span className="inline-flex whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200">Ждут проверки: {pending.length}</span>
+                        : <StatusBadge approved />}</td>
+                      <td className="text-xs text-slate-600">{lastMonth ? `Пересчёт до уровня: ${MONTHS[lastMonth - 1]} ${year}` : ""}</td>
+                      {canEdit && (
+                        <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                          {pending.length > 0 && <button className="btn-sec !px-2.5 !py-1" disabled={busy} onClick={() => approve(pending.map((i) => i.id))}>Утвердить все</button>}
+                        </td>
+                      )}
+                    </tr>
+                    {open && g.items.map((ix) => renderRow(ix, true))}
+                  </Fragment>
                 );
               })}
             </tbody>

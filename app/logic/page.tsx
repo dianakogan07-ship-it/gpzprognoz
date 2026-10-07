@@ -10,7 +10,7 @@ import type { Reference } from "@/lib/types";
 
 const STEPS = [
   { n: 1, title: "Базовая цена", short: "Цена договора прошлого года" },
-  { n: 2, title: "Пересчёт внутри года", short: "До последнего месяца с данными" },
+  { n: 2, title: "Перерасчёт по месяцам", short: "До последнего месяца с данными" },
   { n: 3, title: "Рост цен", short: "Индекс отрасли или инфляция" },
   { n: 4, title: "НДС и итог", short: "Ориентир цены с НДС" },
 ];
@@ -151,11 +151,11 @@ export default function LogicPage() {
           {ex.row && <p className="text-slate-900">Для этой позиции: {ex.contracts} {plural(ex.contracts, "договор", "договора", "договоров")}, базовая цена {fmtRub(ex.price)}.</p>}
         </Step>
 
-        <Step n={2} active={active} onOpen={open} title="Пересчёт внутри года" extra
+        <Step n={2} active={active} onOpen={open} title="Перерасчёт цен по месяцам" extra
           what={`Договор, заключённый в начале года, не учитывает рост цен за следующие месяцы. Доводим его цену до уровня последнего месяца, за который Росстат опубликовал данные${ex.step2.lastMonth ? ` (сейчас — ${monthName(ex.step2.lastMonth)} ${by})` : ""}.`}
           formula="коэффициент = индекс цен производителей последнего месяца / индекс цен производителей месяца договора (оба — к декабрю прошлого года)"
-          link={<Link href="/indices?tab=to_december" className="text-brand hover:underline">Индексы → Пересчёт цен внутри года</Link>}>
-          {ex.step2.state === "off" && <Notice tone="slate">Шаг пропущен: индексы пересчёта внутри {by} года не загружены. Цена договора берётся как есть.</Notice>}
+          link={<Link href="/indices?tab=to_december" className="text-brand hover:underline">Индексы → Перерасчёт цен по месяцам</Link>}>
+          {ex.step2.state === "off" && <Notice tone="slate">Шаг пропущен: индексы перерасчёта цен по месяцам за {by} год не загружены. Цена договора берётся как есть.</Notice>}
           {ex.step2.state === "none" && <Notice tone="amber">Для месяца договора нет коэффициента — цена взята без пересчёта.</Notice>}
           {ex.step2.state === "not_needed" && <Notice tone="slate">Договоры заключены в декабре — пересчёт не нужен.</Notice>}
           {ex.step2.state === "partial" && <Notice tone="amber">Коэффициенты есть не для всех договоров позиции — часть цен взята без пересчёта.</Notice>}
@@ -271,10 +271,10 @@ function Example({ ex, item, itemError }: { ex: Explain; item: ItemResp | null; 
         <Node value={fmtRub(ex.price)} caption={ex.row ? `${ex.contracts > 1 ? "медиана цен договоров" : "цена договора"} ${ex.baseYear}, без НДС` : `цена договора ${ex.baseYear}, без НДС`} />
         <Arrow />
         <Node value={s2.coef ? `× ${s2.coef.toFixed(4).replace(".", ",")}` : "× 1"}
-          caption={s2.state === "off" ? "пересчёт внутри года выключен — шаг пропущен"
+          caption={s2.state === "off" ? "перерасчёт по месяцам выключен — шаг пропущен"
             : s2.state === "not_needed" ? "договор декабря — пересчёт не нужен"
             : s2.state === "none" ? "нет коэффициента за месяц договора"
-            : <>{ex.row && ex.months.length > 1 ? "в среднем по договорам" : `${monthName(m0)} → ${monthName(s2.lastMonth)}`}{!ex.row && <> · <Src idx={s2.idx} tab="to_december" label="Пересчёт внутри года" /></>}{ex.row && <> · <Link href="/indices?tab=to_december" className="text-brand hover:underline">Пересчёт внутри года</Link></>}</>} />
+            : <>{ex.row && ex.months.length > 1 ? "в среднем по договорам" : `${monthName(m0)} → ${monthName(s2.lastMonth)}`}{!ex.row && <> · <Src idx={s2.idx} tab="to_december" label="Перерасчёт по месяцам" /></>}{ex.row && <> · <Link href="/indices?tab=to_december" className="text-brand hover:underline">Перерасчёт по месяцам</Link></>}</>} />
         <Arrow />
         <Node value={`× ${s3.idx ? s3.idx.value.toFixed(4).replace(".", ",") : "1"}`}
           caption={s3.branch === "none" ? "индекса нет — без роста" : <>
