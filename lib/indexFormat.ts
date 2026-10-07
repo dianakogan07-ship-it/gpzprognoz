@@ -33,5 +33,27 @@ export function industryLabel(key: string | null, ref: Pick<Reference, "okpd2" |
 }
 
 /** Сводка покрытия прогноза, сохраняется после расчёта на странице «Прогноз цен» (только счётчики, без данных закупок) */
-export interface Coverage { total: number; industry: number; cpi: number; none: number; targetYear: number; at: string }
+export interface MissingIndustry { okpd2: string; name: string; positions: number }
+export interface Coverage {
+  total: number; industry: number; cpi: number; none: number; targetYear: number; at: string;
+  /** Коды ОКПД2 позиций без отраслевого индекса — для них стоит добавить индекс */
+  missing?: MissingIndustry[];
+}
+
+/** Сводка покрытия по строкам прогноза */
+export function buildCoverage(rows: { okpd2: string; okpd2Name: string; indexLevel: string; comment: string }[], targetYear: number): Coverage {
+  const none = rows.filter((x) => x.comment.includes("не индексирована")).length;
+  const industry = rows.filter((x) => x.indexLevel !== "cpi").length;
+  const missing = new Map<string, MissingIndustry>();
+  for (const r of rows) {
+    if (r.indexLevel !== "cpi") continue;
+    const m = missing.get(r.okpd2) ?? { okpd2: r.okpd2, name: r.okpd2Name, positions: 0 };
+    m.positions++;
+    missing.set(r.okpd2, m);
+  }
+  return {
+    total: rows.length, industry, cpi: rows.length - industry - none, none, targetYear, at: new Date().toISOString(),
+    missing: [...missing.values()].sort((a, b) => b.positions - a.positions || a.okpd2.localeCompare(b.okpd2, "ru", { numeric: true })),
+  };
+}
 export const COVERAGE_KEY = "gpz_forecast_coverage";

@@ -162,4 +162,39 @@ describe("отчётность в формате выгрузки с нумер�
     expect(r.rows).toHaveLength(2);
     expect(r.rows[1]).toMatchObject({ procId: "300000777713", priceNoVat: 1_950_000, quantity: null, status: "Завершена" });
   });
+  it("старый формат: рост в процентах в колонке коэффициента (12 → +12 %) и коды источников", () => {
+    const buf = toBuf([
+      ["kind", "key", "year", "month", "value", "source_code", "approved", "note"],
+      ["forecast", "62", 2027, null, 12, "MER_FORECAST", "true", "ИТ"],
+      ["cpi", null, 2027, null, 1.04, "CBR", "нет", null],
+      ["forecast", null, 2027, null, 1.1, null, null, null],
+    ]);
+    const { rows, errors } = parseIndexFile(buf, SEED.sources);
+    expect(rows).toEqual([
+      expect.objectContaining({ kind: "forecast", key: "62", value: 1.12, approved: true, source_code: "MER_FORECAST", note: "ИТ" }),
+      expect.objectContaining({ kind: "cpi", key: null, value: 1.04, approved: false, source_code: "CBR" }),
+    ]);
+    expect(errors).toEqual([{ line: 4, message: "не указан код ОКПД2/ОКВЭД2" }]);
+  });
+  it("пустой шаблон содержит русские колонки и читается без ошибок", () => {
+    const wb = indexTemplate([], SEED.sources);
+    const head = XLSX.utils.sheet_to_json<unknown[]>(wb.Sheets["Индексы"], { header: 1 })[0];
+    expect(head).toEqual(["Тип индекса", "Код ОКПД2/ОКВЭД2", "Год", "Месяц", "Рост, %", "Источник", "Утверждено (Да/Нет)", "Примечание"]);
+    const { rows, errors } = parseIndexFile(XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer, SEED.sources);
+    expect(rows).toEqual([]);
+    expect(errors).toEqual([]);
+  });
+});
+
+describe("покрытие прогноза", () => {
+  it("считает позиции по видам индекса и собирает коды ОКПД2 без отраслевого индекса", async () => {
+    const { buildCoverage } = await import("@/lib/indexFormat");
+    const g = parseGpz(gpzBuf, SEED.regions.map((r) => r.code)).rows;
+    const res = buildForecast(g, parseReport(repBuf).rows, ref, { baseYear: 2026, targetYear: 2027 });
+    const cov = buildCoverage(res.rows, 2027);
+    expect(cov).toMatchObject({ total: 3, industry: 2, cpi: 1, none: 0, targetYear: 2027 });
+    expect(cov.missing).toEqual([{ okpd2: "80.10.12", name: "Услуги по обеспечению безопасности и проведению расследований", positions: 1 }]);
+    const noCpi = buildForecast(g, parseReport(repBuf).rows, { ...ref, indices: ref.indices.filter((i) => i.kind !== "cpi") }, { baseYear: 2026, targetYear: 2027 });
+    expect(buildCoverage(noCpi.rows, 2027)).toMatchObject({ cpi: 0, none: 1 });
+  });
 });

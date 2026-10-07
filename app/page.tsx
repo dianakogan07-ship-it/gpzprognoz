@@ -6,7 +6,7 @@ import { downloadWorkbook, forecastWorkbook } from "@/lib/excel";
 import { api, useReference } from "@/components/useReference";
 import { FilePick } from "@/components/FilePick";
 import { IconDownload, IconPlay } from "@/components/Icons";
-import { COVERAGE_KEY, type Coverage } from "@/lib/indexFormat";
+import { COVERAGE_KEY, buildCoverage } from "@/lib/indexFormat";
 
 const fmt = (n: number) => n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
 
@@ -30,9 +30,7 @@ export default function ForecastPage() {
       const r = parseReport(await rep.arrayBuffer());
       const result = buildForecast(g.rows, r.rows, reference, { baseYear, targetYear: baseYear + 1 });
       setRes(result);
-      const none = result.rows.filter((x) => x.comment.includes("не индексирована")).length;
-      const industry = result.rows.filter((x) => x.indexLevel !== "cpi").length;
-      const cov: Coverage = { total: result.rows.length, industry, cpi: result.rows.length - industry - none, none, targetYear: baseYear + 1, at: new Date().toISOString() };
+      const cov = buildCoverage(result.rows, baseYear + 1);
       try { localStorage.setItem(COVERAGE_KEY, JSON.stringify(cov)); } catch { /* хранилище недоступно */ }
       if (result.newWsCodes.length && db) {
         await api("/api/ws/auto", "POST", { codes: result.newWsCodes });

@@ -5,16 +5,20 @@ import { Modal } from "@/components/Modal";
 import { IconCheck, IconDownload, IconEdit, IconPlus, IconTrash, IconUpload } from "@/components/Icons";
 import { downloadWorkbook, indexTemplate, parseIndexFile, type IndexParseError } from "@/lib/excel";
 import {
-  COVERAGE_KEY, MONTHS, coefToPercent, formatGrowth, industryLabel, percentToCoef, type Coverage,
+  COVERAGE_KEY, MONTHS, coefToPercent, formatGrowth, industryLabel, industryName, percentToCoef, type Coverage,
 } from "@/lib/indexFormat";
 import type { IndexKind, PriceIndex, Reference } from "@/lib/types";
+import { findIndex, okvedSection } from "@/lib/forecast";
 
-type Tab = { kind: IndexKind; title: string; hint: string; extra?: boolean };
+type Tab = { kind: IndexKind; title: string; hint: string; empty: string; extra?: boolean };
 
 const tabsFor = (target: number): Tab[] => [
-  { kind: "forecast", title: `Рост цен по отраслям ${target}`, hint: "Ожидаемый рост цен в отрасли на следующий год. Подбирается по коду ОКПД2, а если его нет — по разделу ОКВЭД2." },
-  { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования." },
-  { kind: "to_december", title: `Пересчёт цен внутри ${target - 1}`, hint: "Доводит цену договора, заключённого в начале года, до уровня декабря.", extra: true },
+  { kind: "forecast", title: `Рост цен по отраслям ${target}`, hint: "Ожидаемый рост цен в отрасли на следующий год. Подбирается по коду ОКПД2, а если его нет — по разделу ОКВЭД2.",
+    empty: "Отраслевые индексы делают прогноз точнее: цены на стройматериалы, ИТ-услуги или топливо растут по-разному. Без них все позиции считаются по общей инфляции и требуют согласования." },
+  { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
+    empty: "Общая инфляция — запасной вариант: она применяется, когда для отрасли нет своего индекса. Без неё такие позиции останутся без пересчёта на следующий год." },
+  { kind: "to_december", title: `Пересчёт цен внутри ${target - 1}`, hint: "Доводит цену договора, заключённого в начале года, до уровня декабря.", extra: true,
+    empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня декабря, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
 ];
 
 function StatusBadge({ approved }: { approved: boolean }) {
@@ -134,6 +138,15 @@ function IndexForm({ tab, draft, reference, onClose, onSaved }: {
   );
 }
 
+/* ---------- Кнопка загрузки файла ---------- */
+function UploadButton({ busy, onFile, primary }: { busy: boolean; onFile: (f: File) => void; primary?: boolean }) {
+  return (
+    <label className={`${primary ? "btn" : "btn-sec"} cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}><IconUpload />Загрузить из Excel
+      <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+    </label>
+  );
+}
+
 /* ---------- Страница ---------- */
 type UploadReport = { inserted: number; updated: number; errors: IndexParseError[]; fatal?: string };
 
@@ -153,6 +166,7 @@ export default function IndicesPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [report, setReport] = useState<UploadReport | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showMissing, setShowMissing] = useState(false);
   const canEdit = db === true;
 
   const indices = useMemo(() => reference?.indices ?? [], [reference]);
@@ -195,7 +209,8 @@ export default function IndicesPage() {
     setBusy(false);
   }
 
-  const openNew = () => setForm({ key: "", year: tabKind === "to_december" ? target - 1 : target, month: 1, percent: "", source_code: "", note: "", approved: false });
+  const openNew = (kind: IndexKind = tabKind, key = "") =>
+    setForm({ key, year: kind === "to_december" ? target - 1 : target, month: 1, percent: "", source_code: "", note: "", approved: false });
   const openEdit = (ix: PriceIndex) => setForm({
     id: ix.id, key: ix.key ?? "", year: ix.year, month: ix.month ?? 1, percent: String(coefToPercent(ix.value)).replace(".", ","),
     source_code: ix.source_code ?? "", note: ix.note ?? "", approved: ix.approved,
@@ -211,11 +226,7 @@ export default function IndicesPage() {
             <p className="hint mt-1">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit && (
-              <label className={`btn-sec cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}><IconUpload />Загрузить из Excel
-                <input type="file" accept=".xlsx,.xls" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) upload(f); }} />
-              </label>
-            )}
+            {canEdit && <UploadButton busy={busy} onFile={upload} />}
             <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
           </div>
         </div>
@@ -248,16 +259,47 @@ export default function IndicesPage() {
         <div className="card py-4">
           <p className="text-sm font-semibold text-slate-900">Покрытие прогноза</p>
           <p className="mt-1 text-sm text-slate-700">
-            Из {coverage.total} позиций прогноза: <b className="text-emerald-700">{coverage.industry}</b> — отраслевой индекс,{" "}
-            <b className="text-amber-700">{coverage.cpi}</b> — общая инфляция (требуют согласования)
-            {coverage.none > 0 && <>, <b className="text-red-700">{coverage.none}</b> — без индекса</>}.
+            Из {coverage.total} {plural(coverage.total, "позиции", "позиций", "позиций")} прогноза:{" "}
+            <b className="text-emerald-700">{coverage.industry}</b> — отраслевой индекс,{" "}
+            <b className="text-amber-700">{coverage.cpi}</b> — общая инфляция (требуют согласования),{" "}
+            <b className="text-red-700">{coverage.none}</b> — без индекса.
           </p>
           <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-slate-100">
             <div className="bg-emerald-500" style={{ width: `${(coverage.industry / coverage.total) * 100}%` }} />
             <div className="bg-amber-400" style={{ width: `${(coverage.cpi / coverage.total) * 100}%` }} />
             <div className="bg-red-400" style={{ width: `${(coverage.none / coverage.total) * 100}%` }} />
           </div>
-          <p className="hint mt-2">По последнему расчёту от {new Date(coverage.at).toLocaleString("ru-RU")}. Чтобы больше позиций считалось по отраслевому индексу, добавьте индексы на вкладке «{tabs[0].title}».</p>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+            <p className="hint">По последнему расчёту прогноза от {new Date(coverage.at).toLocaleString("ru-RU")}.</p>
+            {(coverage.missing?.length ?? 0) > 0 && (
+              <button className="text-sm font-medium text-brand hover:underline" onClick={() => setShowMissing(!showMissing)}>
+                {showMissing ? "Скрыть список" : "Показать позиции без отраслевого индекса"}
+              </button>
+            )}
+          </div>
+          {showMissing && coverage.missing && (
+            <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-200">
+              <table className="tbl">
+                <thead><tr><th>Код ОКПД2</th><th>Наименование</th><th className="text-right">Позиций</th><th className="w-48" /></tr></thead>
+                <tbody>
+                  {coverage.missing.map((m) => {
+                    const added = reference ? findIndex(indices.filter((i) => i.kind === "forecast" && i.year === coverage.targetYear), m.okpd2, okvedSection(m.okpd2, reference)) : null;
+                    return (
+                      <tr key={m.okpd2}>
+                        <td className="whitespace-nowrap font-medium">{m.okpd2}</td>
+                        <td>{m.name || (reference && industryName(m.okpd2.slice(0, 2), reference)) || "—"}</td>
+                        <td className="text-right">{m.positions}</td>
+                        <td className="text-right">
+                          {added ? <span className="text-xs text-emerald-700">индекс добавлен — пересчитайте прогноз</span>
+                            : canEdit && <button className="btn-sec !px-2.5 !py-1" onClick={() => { setTabKind("forecast"); setOnlyPending(false); openNew("forecast", m.okpd2); }}><IconPlus width={14} height={14} />Добавить индекс</button>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -291,13 +333,25 @@ export default function IndicesPage() {
           {canEdit && (
             <div className="flex gap-2">
               {selected.size > 0 && <button className="btn-sec" disabled={busy} onClick={() => approve([...selected])}><IconCheck width={16} height={16} />Утвердить выбранные ({selected.size})</button>}
-              <button className="btn" onClick={openNew}><IconPlus width={16} height={16} />Добавить индекс</button>
+              {rows.length > 0 && <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить индекс</button>}
             </div>
           )}
         </div>
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
 
-        <div className="overflow-auto">
+        {rows.length === 0 && !onlyPending ? (
+          <div className="rounded-xl border border-dashed border-slate-300 px-6 py-10 text-center">
+            <p className="font-medium text-slate-900">Индексов пока нет</p>
+            <p className="hint mx-auto mt-1 max-w-2xl">{tab.empty}</p>
+            {canEdit ? (
+              <div className="mt-4 flex flex-wrap justify-center gap-2">
+                <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить</button>
+                <UploadButton busy={busy} onFile={upload} />
+              </div>
+            ) : db === false && <p className="mt-3 text-sm text-amber-700">Чтобы добавлять индексы, подключите базу данных.</p>}
+          </div>
+        ) : (
+        <div className="overflow-x-auto">
           <table className="tbl">
             <thead>
               <tr>
@@ -314,9 +368,7 @@ export default function IndicesPage() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={9} className="py-8 text-center text-slate-500">
-                  {onlyPending ? "На этой вкладке нет индексов, ждущих проверки" : "Индексов пока нет. Добавьте вручную или загрузите из Excel."}
-                </td></tr>
+                <tr><td colSpan={9} className="py-8 text-center text-slate-500">На этой вкладке нет индексов, ждущих проверки</td></tr>
               )}
               {rows.map((ix) => {
                 const src = sourceOf(ix.source_code);
@@ -345,6 +397,7 @@ export default function IndicesPage() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {form && reference && (
