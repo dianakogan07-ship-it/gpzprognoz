@@ -55,3 +55,77 @@ ALTER TABLE price_indices ADD COLUMN IF NOT EXISTS loaded_at TIMESTAMPTZ DEFAULT
 DROP INDEX IF EXISTS price_indices_uniq;
 CREATE UNIQUE INDEX IF NOT EXISTS price_indices_active_uniq ON price_indices (kind, COALESCE(key, ''), year, COALESCE(month, 0)) WHERE pending_of IS NULL AND superseded_at IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS price_indices_pending_uniq ON price_indices (pending_of) WHERE pending_of IS NOT NULL;
+-- Сохранённые прогнозы, версии, строки, журнал изменений, факт
+CREATE TABLE IF NOT EXISTS forecasts (
+  id SERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  year INT NOT NULL,
+  base_year INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'archived')),
+  current_version_id INT,
+  author TEXT NOT NULL DEFAULT 'owner',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS forecast_versions (
+  id SERIAL PRIMARY KEY,
+  forecast_id INT NOT NULL REFERENCES forecasts(id) ON DELETE CASCADE,
+  number INT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'archived')),
+  comment TEXT,
+  index_snapshot JSONB NOT NULL DEFAULT '[]',
+  index_fingerprint TEXT,
+  stats JSONB NOT NULL DEFAULT '{}',
+  author TEXT NOT NULL DEFAULT 'owner',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (forecast_id, number)
+);
+CREATE TABLE IF NOT EXISTS forecast_items (
+  id SERIAL PRIMARY KEY,
+  version_id INT NOT NULL REFERENCES forecast_versions(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  okpd2 TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  category TEXT,
+  method TEXT,
+  region TEXT,
+  unit TEXT NOT NULL,
+  contracts INT NOT NULL DEFAULT 0,
+  base_price NUMERIC(18, 2) NOT NULL,
+  index_value NUMERIC(8, 5) NOT NULL,
+  index_source TEXT,
+  forecast_price NUMERIC(18, 2) NOT NULL,
+  needs_review BOOLEAN NOT NULL DEFAULT FALSE,
+  reviewed BOOLEAN NOT NULL DEFAULT FALSE,
+  manually_edited BOOLEAN NOT NULL DEFAULT FALSE,
+  data JSONB NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS forecast_items_version ON forecast_items (version_id, okpd2);
+CREATE TABLE IF NOT EXISTS change_log (
+  id SERIAL PRIMARY KEY,
+  forecast_id INT NOT NULL REFERENCES forecasts(id) ON DELETE CASCADE,
+  version_id INT REFERENCES forecast_versions(id) ON DELETE CASCADE,
+  item_id INT REFERENCES forecast_items(id) ON DELETE SET NULL,
+  okpd2 TEXT,
+  event_type TEXT NOT NULL,
+  field TEXT,
+  old_value TEXT,
+  new_value TEXT,
+  reason TEXT,
+  author TEXT NOT NULL DEFAULT 'owner',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS change_log_forecast ON change_log (forecast_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS actuals (
+  id SERIAL PRIMARY KEY,
+  forecast_id INT NOT NULL REFERENCES forecasts(id) ON DELETE CASCADE,
+  item_key TEXT NOT NULL,
+  okpd2 TEXT NOT NULL,
+  subject TEXT,
+  category TEXT,
+  actual_price NUMERIC(18, 2) NOT NULL,
+  contracts INT NOT NULL DEFAULT 0,
+  author TEXT NOT NULL DEFAULT 'owner',
+  loaded_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key);

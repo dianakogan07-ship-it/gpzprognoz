@@ -5,9 +5,25 @@ import { MIGRATIONS_SQL, SCHEMA_SQL } from "./schema";
 
 export const hasDb = () => Boolean(process.env.DATABASE_URL);
 
-export function sql() {
+type Row = Record<string, any>;
+type Db = { query: (text: string, params?: unknown[]) => Promise<Row[]> };
+let local: Db | null = null;
+
+export function sql(): Db {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL не задан");
-  return neon(process.env.DATABASE_URL);
+  // Для локальной проверки: обычный PostgreSQL вместо Neon (DATABASE_URL=local, PG_LOCAL_HOST=/путь/к/сокету)
+  if (process.env.DATABASE_URL === "local") return (local ??= localPg());
+  return neon(process.env.DATABASE_URL) as unknown as Db;
+}
+
+function localPg(): Db {
+  let pool: Promise<{ query: (t: string, p?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> }> | null = null;
+  return {
+    async query(text, params) {
+      pool ??= import(/* webpackIgnore: true */ "pg" as string).then((m) => new (m.default ?? m).Pool({ host: process.env.PG_LOCAL_HOST, port: Number(process.env.PG_LOCAL_PORT ?? 5432), user: process.env.PG_LOCAL_USER ?? "postgres", database: process.env.PG_LOCAL_DB ?? "postgres" }));
+      return (await (await pool).query(text, params)).rows;
+    },
+  };
 }
 
 /** Описание редактируемых справочников: таблица, ключ, колонки */
@@ -40,19 +56,35 @@ const SEED_BY_TABLE: Record<TableName, unknown[]> = {
 };
 
 let ready: Promise<void> | null = null;
+/** Раздел прогнозов создан впервые — нужно добавить примеры */
+let needDemo = false;
+let demo: Promise<void> | null = null;
+
+/** Примеры прогнозов в новой базе (вызывается из списка прогнозов, после ensureSchema) */
+export async function ensureDemo() {
+  await ensureSchema();
+  if (!needDemo || process.env.SEED_DEMO === "0") return;
+  demo ??= import("./forecasts/demo").then((m) => m.seedDemo()).then(() => { needDemo = false; });
+  return demo;
+}
 
 /** Создаёт таблицы и стартовые справочники, если база пустая */
 export function ensureSchema(): Promise<void> {
   ready ??= (async () => {
     const db = sql();
-    const [{ t }] = await db.query("SELECT to_regclass('public.price_indices') AS t");
+    const [{ t, f }] = await db.query("SELECT to_regclass('public.price_indices') AS t, to_regclass('public.forecasts') AS f");
     const stmts = (s: string) => s.split(";").map((x) => x.replace(/^\s*--.*$/gm, "").trim()).filter(Boolean);
     if (!t) for (const stmt of stmts(SCHEMA_SQL)) await db.query(stmt);
     for (const stmt of stmts(MIGRATIONS_SQL)) await db.query(stmt);
-    if (t) return;
+    if (t) {
+      // Примеры прогнозов — только когда раздел прогнозов появился впервые
+      if (!f) needDemo = true;
+      return;
+    }
     for (const name of Object.keys(TABLES) as TableName[]) {
       await upsertRows(name, (SEED_BY_TABLE[name] as Record<string, unknown>[]).map(({ id: _id, ...r }) => r));
     }
+    needDemo = true;
   })().catch((e) => { ready = null; throw e; });
   return ready;
 }

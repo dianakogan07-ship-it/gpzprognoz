@@ -47,12 +47,17 @@ export interface ViewRow {
   /** Рост в процентах, 4.0 = +4 % */
   growth: number;
   search: string;
+  /** Для сохранённого прогноза: строка в хранилище и отметки проверки */
+  meta?: RowMeta;
 }
 
-export function toViewRows(rows: ForecastRow[]): ViewRow[] {
+export interface RowMeta { itemId: number; needsReview: boolean; reviewed: boolean; edited: boolean }
+
+export function toViewRows(rows: ForecastRow[], metas?: RowMeta[]): ViewRow[] {
   return rows.map((row, id) => ({
-    id,
+    id: metas?.[id]?.itemId ?? id,
     row,
+    meta: metas?.[id],
     status: statusOf(row),
     reasons: reasonsOf(row),
     growth: Math.round((row.forecastIndex - 1) * 1000) / 10,
@@ -65,6 +70,8 @@ export function toViewRows(rows: ForecastRow[]): ViewRow[] {
 export type SourceKind = "okpd2" | "okved2" | "cpi";
 export type ContractsBucket = "1" | "2-4" | "5+";
 export type Repeat = "yes" | "no" | "unknown";
+export type Flag = "review" | "edited";
+export const FLAG_LABEL: Record<Flag, string> = { review: "Согласовать человеком", edited: "Есть ручные правки" };
 export type SortKey = "subject" | "region" | "price" | "growth" | "forecast";
 
 export interface Filters {
@@ -78,6 +85,9 @@ export interface Filters {
   growthMin: number | null;
   growthMax: number | null;
   repeat: Repeat[];
+  method: string[];
+  /** «review» — требует согласования, «edited» — есть ручные правки */
+  flags: Flag[];
   sort: SortKey | null;
   dir: "asc" | "desc";
   /** Фильтры списка «Не вошли в расчёт» */
@@ -87,7 +97,7 @@ export interface Filters {
 
 export const EMPTY_FILTERS: Filters = {
   q: "", status: [], category: [], region: [], okpd: "", source: [], contracts: [],
-  growthMin: null, growthMax: null, repeat: [], sort: null, dir: "asc", exFile: [], exReason: [],
+  growthMin: null, growthMax: null, repeat: [], method: [], flags: [], sort: null, dir: "asc", exFile: [], exReason: [],
 };
 
 export const SOURCE_LABEL: Record<SourceKind, string> = { okpd2: "Отраслевой ОКПД2", okved2: "Отраслевой ОКВЭД2", cpi: "Общая инфляция" };
@@ -110,7 +120,7 @@ export function filterRows(rows: ViewRow[], f: Filters): ViewRow[] {
   const q = f.q.trim().toLowerCase();
   const words = q ? q.split(/\s+/) : [];
   const st = new Set(f.status), cat = new Set(f.category), reg = new Set(f.region), src = new Set(f.source),
-    cnt = new Set(f.contracts), rep = new Set(f.repeat);
+    cnt = new Set(f.contracts), rep = new Set(f.repeat), mth = new Set(f.method), fl = new Set(f.flags);
   return rows.filter((v) => {
     const r = v.row;
     if (words.length && !words.every((w) => v.search.includes(w))) return false;
@@ -123,6 +133,9 @@ export function filterRows(rows: ViewRow[], f: Filters): ViewRow[] {
     if (f.growthMin != null && v.growth < f.growthMin) return false;
     if (f.growthMax != null && v.growth > f.growthMax) return false;
     if (rep.size && !rep.has(repeatOf(r.repeatable))) return false;
+    if (mth.size && !mth.has(r.method ?? "")) return false;
+    if (fl.has("review") && !(v.meta ? v.meta.needsReview : r.needsApproval)) return false;
+    if (fl.has("edited") && !v.meta?.edited) return false;
     return true;
   });
 }
@@ -146,7 +159,7 @@ export function sortRows(rows: ViewRow[], key: SortKey | null, dir: "asc" | "des
 
 /* ---------- Фильтры в адресной строке ---------- */
 
-const LIST_KEYS = { status: "st", category: "cat", region: "reg", source: "src", contracts: "n", repeat: "rep", exFile: "xf", exReason: "xr" } as const;
+const LIST_KEYS = { status: "st", category: "cat", region: "reg", source: "src", contracts: "n", repeat: "rep", method: "m", flags: "fl", exFile: "xf", exReason: "xr" } as const;
 
 export function filtersToQuery(f: Filters): string {
   const p = new URLSearchParams();
@@ -182,6 +195,8 @@ export function filtersFromQuery(qs: string | URLSearchParams): Filters {
     growthMin: num("gmin"),
     growthMax: num("gmax"),
     repeat: list<Repeat>("rep", ["yes", "no", "unknown"]),
+    method: list("m"),
+    flags: list<Flag>("fl", ["review", "edited"]),
     sort: sorts.includes(sort as SortKey) ? (sort as SortKey) : null,
     dir: sorts.includes(sort as SortKey) && dir === "desc" ? "desc" : "asc",
     exFile: list("xf"),

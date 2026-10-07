@@ -37,10 +37,28 @@ export interface ForecastRow {
   indexApproved: boolean | null;
   indexSourceCode: string | null;
   repeatable: boolean | null;
+  /** Способ закупки — самый частый в группе */
+  method?: string | null;
+  /** Обезличенные договоры группы: цена за единицу без НДС и месяц заключения — для пересчёта по новым индексам */
+  points?: ContractPoint[];
   needsApproval: boolean;
   smallSample: boolean;
   flags: string[];
   comment: string;
+}
+/** Один договор без сведений о заказчике и контрагенте */
+export interface ContractPoint {
+  okpd2: string;
+  unit: string;
+  region: string | null;
+  ws: string | null;
+  category: string | null;
+  method: string | null;
+  subject: string;
+  /** Цена за единицу без НДС */
+  raw: number;
+  /** Месяц заключения договора, 1–12 */
+  month: number | null;
 }
 export interface ExcludedRow { file: "ГПЗ" | "Отчётность"; row: number; lot: string | null; reason: string }
 export interface ForecastResult { rows: ForecastRow[]; excluded: ExcludedRow[]; newWsCodes: string[]; stats: { gpz: number; matched: number; used: number } }
@@ -103,16 +121,9 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     if (r.lot) byLot.set(r.lot, r);
     if (r.procId && !byProc.has(r.procId)) byProc.set(r.procId, r);
   }
-  const sourceByCode = new Map(ref.sources.map((s) => [s.code, s]));
-  const active = ref.indices.filter(isActiveIndex);
-  const toDec = active.filter((i) => i.kind === "to_december" && i.year === opt.baseYear);
-  const fc = active.filter((i) => i.kind === "forecast" && i.year === opt.targetYear);
-  const cpi = active.find((i) => i.kind === "cpi" && i.year === opt.targetYear) ?? null;
   const knownWs = new Set(ref.ws.map((w) => w.code));
   const newWs = new Set<string>();
-
-  type Item = { g: GpzRow; raw: number; price: number; adjusted: boolean; needed: boolean };
-  const groups = new Map<string, Item[]>();
+  const points: ContractPoint[] = [];
   let matched = 0;
 
   for (const g of gpz) {
@@ -128,20 +139,48 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     const qty = rep.quantity ?? g.quantity;
     if (!qty || qty <= 0) { ex("Не указано количество"); continue; }
     if (!g.unit && !g.unitName) { ex("Не указана единица измерения"); continue; }
+    points.push({
+      okpd2: g.okpd2, unit: unitLabel(g.unitName ?? g.unit, ref), region: g.region, ws, category: g.category,
+      method: g.method ?? null, subject: anonymize(g.subject ?? ""),
+      raw: rep.priceNoVat / qty, month: rep.contractDate ? rep.contractDate.getUTCMonth() + 1 : null,
+    });
+  }
+  const rows = aggregateForecast(points, ref, opt);
+  const gLots = new Set(gpz.map((g) => g.lot).filter(Boolean));
+  const gProcs = new Set(gpz.map((g) => g.procId).filter(Boolean));
+  for (const r of report) {
+    if (!(r.lot && gLots.has(r.lot)) && !(r.procId && gProcs.has(r.procId))) excluded.push({ file: "Отчётность", row: r.row, lot: r.lot ?? r.procId, reason: "Нет в ГПЗ" });
+  }
+  return { rows, excluded, newWsCodes: [...newWs].sort(), stats: { gpz: gpz.length, matched, used: rows.reduce((s, r) => s + r.contracts, 0) } };
+}
 
-    const raw = rep.priceNoVat / qty;
-    let price = raw;
+/** Ключ группы позиций прогноза: ОКПД2 + единица + регион + код WS */
+export const groupKey = (p: { okpd2: string; unit: string; region: string | null; ws: string | null }) => [p.okpd2, p.unit, p.region ?? "", p.ws ?? ""].join("|");
+
+/**
+ * Группировка договоров и расчёт прогноза по индексам из справочника.
+ * Используется и при первом расчёте, и при пересчёте сохранённого прогноза по новым индексам.
+ */
+export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: ForecastOptions): ForecastRow[] {
+  const sourceByCode = new Map(ref.sources.map((s) => [s.code, s]));
+  const active = ref.indices.filter(isActiveIndex);
+  const toDec = active.filter((i) => i.kind === "to_december" && i.year === opt.baseYear);
+  const fc = active.filter((i) => i.kind === "forecast" && i.year === opt.targetYear);
+  const cpi = active.find((i) => i.kind === "cpi" && i.year === opt.targetYear) ?? null;
+
+  type Item = { p: ContractPoint; price: number; adjusted: boolean; needed: boolean };
+  const groups = new Map<string, Item[]>();
+  for (const p of points) {
+    let price = p.raw;
     let adjusted = true;
-    const month = rep.contractDate ? rep.contractDate.getUTCMonth() + 1 : null;
-    if (month !== 12) {
-      const cand = month ? toDec.filter((i) => i.month === month) : [];
-      const hit = findIndex(cand, g.okpd2, okvedSection(g.okpd2, ref));
+    if (p.month !== 12) {
+      const cand = p.month ? toDec.filter((i) => i.month === p.month) : [];
+      const hit = findIndex(cand, p.okpd2, okvedSection(p.okpd2, ref));
       if (hit) price *= hit.index.value;
       else adjusted = false;
     }
-    const unit = unitLabel(g.unitName ?? g.unit, ref);
-    const key = [g.okpd2, unit, g.region ?? "", ws ?? ""].join("|");
-    const item = { g: { ...g, ws, unit }, raw, price, adjusted, needed: month !== 12 };
+    const key = groupKey(p);
+    const item = { p, price, adjusted, needed: p.month !== 12 };
     groups.get(key)?.push(item) ?? groups.set(key, [item]);
   }
 
@@ -152,11 +191,16 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     }
     return "";
   };
+  const mostFrequent = (xs: (string | null)[]) => {
+    const m = new Map<string, number>();
+    for (const x of xs) if (x) m.set(x, (m.get(x) ?? 0) + 1);
+    return [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  };
 
   const rows: ForecastRow[] = [];
   for (const items of groups.values()) {
-    const g0 = items[0].g;
-    const okpd2 = g0.okpd2!;
+    const g0 = items[0].p;
+    const okpd2 = g0.okpd2;
     const { value: base, kept, outliers } = robustMedian(items.map((i) => i.price));
     const m0 = median(items.map((i) => i.price));
     const keptItems = items.filter((i) => i.price <= m0 * OUTLIER_FACTOR && i.price >= m0 / OUTLIER_FACTOR);
@@ -196,13 +240,12 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
     if (repeatable === false) { flags.push("ориентир справочный"); notes.push("разовая закупка"); }
     if (repeatable === null) notes.push("повторяемость не определена");
 
-    const subjects = items.map((i) => i.g.subject).filter(Boolean) as string[];
     const name = okpdName(okpd2);
     rows.push({
       okpd2, okpd2Name: name,
       category: g0.category, ws: g0.ws,
-      subject: name || anonymize(subjects[0] ?? ""),
-      unit: g0.unit!, unitLabel: g0.unit!, region: g0.region,
+      subject: name || items.map((i) => i.p.subject).find(Boolean) || okpd2,
+      unit: g0.unit, unitLabel: g0.unit, region: g0.region,
       regionName: ref.regions.find((r) => r.code === g0.region)?.name ?? null,
       contracts: items.length, outliers,
       minPrice: round2(Math.min(...kept)), maxPrice: round2(Math.max(...kept)),
@@ -210,24 +253,22 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       forecastIndex: k, indexLevel: level, indexSource: src,
       indexSourceUrl: used?.source_code ? sourceByCode.get(used.source_code)?.url ?? "" : "",
       forecastPrice: round2(base * k),
-      prices: keptItems.map((i) => round2(i.raw)).sort((a, b) => a - b),
-      rawMedian: round2(median(keptItems.map((i) => i.raw))),
+      prices: keptItems.map((i) => round2(i.p.raw)).sort((a, b) => a - b),
+      rawMedian: round2(median(keptItems.map((i) => i.p.raw))),
       outlierPrices,
       toDecember,
       indexKey: used?.key ?? null,
       indexApproved: used ? used.approved : null,
       indexSourceCode: used?.source_code ?? null,
-      repeatable, needsApproval, smallSample, flags,
+      repeatable,
+      method: mostFrequent(items.map((i) => i.p.method)),
+      points: items.map((i) => ({ ...i.p, raw: round2(i.p.raw) })),
+      needsApproval, smallSample, flags,
       comment: [`Медиана ${items.length - outliers} дог. ${round2(base)} ₽ → ${pct(k)}`, ...notes].join("; "),
     });
   }
   rows.sort((a, b) => a.okpd2.localeCompare(b.okpd2) || a.unit.localeCompare(b.unit));
-  const gLots = new Set(gpz.map((g) => g.lot).filter(Boolean));
-  const gProcs = new Set(gpz.map((g) => g.procId).filter(Boolean));
-  for (const r of report) {
-    if (!(r.lot && gLots.has(r.lot)) && !(r.procId && gProcs.has(r.procId))) excluded.push({ file: "Отчётность", row: r.row, lot: r.lot ?? r.procId, reason: "Нет в ГПЗ" });
-  }
-  return { rows, excluded, newWsCodes: [...newWs].sort(), stats: { gpz: gpz.length, matched, used: rows.reduce((s, r) => s + r.contracts, 0) } };
+  return rows;
 }
 
 /** Обозначение единицы: код ОКЕИ или полное наименование переводятся в краткое («796» → «шт», «Комплект» → «компл») */
