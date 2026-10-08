@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { IconDownload } from "./Icons";
 import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
@@ -16,10 +16,9 @@ const SOURCE_CODES = ["MER_FORECAST", "ROSSTAT_ICP", "CBR"];
  * Отчёт для закупщиков: только итог и его обоснование, без технических пометок.
  * Срез — общие с вкладкой «Прогноз» фильтры «Категория» и «Регион»; статус не учитывается.
  */
-export function ForecastReport({ view, filters, reference, year, baseYear, approved, approvedAt, title, onExcel }: {
+export function ForecastReport({ view, filters, reference, year, baseYear, approved, approvedAt, title }: {
   view: ViewRow[]; filters: ForecastFilters; reference: Reference;
   year: number; baseYear: number; approved: boolean; approvedAt: string | null; title: string;
-  onShowAll?: () => void; onExcel: (rows: ViewRow[]) => void;
 }) {
   const { f, set } = filters;
   const slice = useMemo(() => filterRows(view, { ...EMPTY_FILTERS, category: f.category, region: f.region }), [view, f.category, f.region]);
@@ -49,11 +48,65 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
     f.region.length ? `регионы: ${f.region.map((k) => counts.reg.get(k)?.label ?? k).join(", ")}` : "все регионы",
   ].join("; ");
   const sources = reference.sources.filter((s) => SOURCE_CODES.includes(s.code));
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  async function downloadExcel() {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    const add = (name: string, data: (string | number | null)[][], widths: number[]) => {
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws["!cols"] = widths.map((wch) => ({ wch }));
+      XLSX.utils.book_append_sheet(wb, ws, name);
+    };
+    const p1 = (v: number) => Math.round(v * 10) / 10;
+    const head = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}${approved ? "" : ". Прогноз не утверждён"}`], []];
+    add("Сводка", [...head,
+      ["Показатель", "Значение", "Ед."],
+      [`Средний рост цен в ${year}`, p1(total.total), "%"],
+      ...(cpi != null ? [[`Инфляция по прогнозу МЭР на ${year}`, p1(cpi), "%"]] : []),
+      ["Предметов закупки", rows.length, "шт."],
+      [`Договоров в основе (${baseYear})`, contracts, "шт."],
+      [],
+      ["Из чего складывается рост", "Значение", "Ед."],
+      [`Цена договоров ${baseYear} (медиана, без НДС)`, 100, "%"],
+      [`Рост цен в ${baseYear} — пересчёт до последнего месяца с данными (Росстат)`, p1(total.intra), "п.п."],
+      [`Рост отрасли в ${year} (прогноз МЭР)`, p1(total.industry), "п.п."],
+      [`Прогноз ${year} к цене договоров ${baseYear}`, p1(100 + total.total), "%"],
+    ], [62, 14, 8]);
+    add("Рост по категориям", [...head,
+      ["Категория", `Рост цен в ${baseYear}, п.п.`, `Рост отрасли в ${year}, п.п.`, "Итого рост, %"],
+      ...cats.map((c) => [c.key || "Без категории", p1(c.intra), p1(c.industry), p1(c.total)]),
+    ], [48, 18, 20, 14]);
+    add("Рост по предметам", [...head,
+      ["Предмет закупки", `Рост цен в ${baseYear}, п.п.`, `Рост отрасли в ${year}, п.п.`, "Итого рост, %"],
+      ...subjects.map((g) => [g.key, p1(g.intra), p1(g.industry), p1(g.total)]),
+    ], [60, 18, 20, 14]);
+    const reg = regionTable(rows);
+    if (reg.length) add("Цена по регионам", [...head,
+      ["Предмет закупки", "Ед.", "Регион", `Цена ${baseYear}, ₽ без НДС`, `Прогноз ${year}, ₽ без НДС`, "Отличие от минимума, %"],
+      ...reg.flatMap((it) => it.regs.map((r, i) => [it.subject, it.unit, r.name, Math.round(r.base * 100) / 100, Math.round(r.fc * 100) / 100,
+        i === 0 ? "минимум" : p1((r.fc / it.regs[0].fc - 1) * 100)])),
+    ], [50, 10, 40, 20, 20, 20]);
+    add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
+    const { downloadWorkbook } = await import("@/lib/excel");
+    downloadWorkbook(wb, `Отчёт — прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "));
+  }
+  async function downloadPdf() {
+    setPdfBusy(true);
+    try {
+      // Даём отрисоваться заголовку для PDF
+      await new Promise((r) => setTimeout(r, 50));
+      const { exportPdf } = await import("@/lib/pdfExport");
+      const name = `Прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.pdf`.replace(/[\\/:*?"<>|]+/g, " ");
+      await exportPdf(rootRef.current!, name);
+    } catch (e) { alert(`Не удалось сформировать PDF: ${e instanceof Error ? e.message : e}`); }
+    setPdfBusy(false);
+  }
 
   return (
-    <div className="report space-y-4" style={{ color: RC.ink }}>
-      {/* Заголовок для печати */}
-      <div className="hidden print:block">
+    <div ref={rootRef} className="report space-y-4" style={{ color: RC.ink }}>
+      {/* Заголовок для PDF */}
+      <div data-pdf className={pdfBusy ? "block" : "hidden"}>
         <h1 className="text-2xl font-semibold">Прогноз цен {year}</h1>
         <p className="text-sm" style={{ color: RC.muted }}>{title}{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""} · {sliceText}</p>
         {!approved && <p className="mt-1 text-sm font-semibold text-amber-700">Прогноз не утверждён — цифры могут измениться</p>}
@@ -66,14 +119,14 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
           options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
         <span className="hidden text-xs sm:inline" style={{ color: RC.muted }}>Фильтры общие с вкладкой «Прогноз»</span>
         <div className="ml-auto flex gap-2">
-          <button className="btn-sec" onClick={() => window.print()}><IconDownload />PDF</button>
-          <button className="btn-sec" onClick={() => onExcel(slice)}><IconDownload />Excel</button>
+          <button className="btn-sec" disabled={pdfBusy} onClick={downloadPdf}><IconDownload />{pdfBusy ? "Готовим PDF…" : "PDF"}</button>
+          <button className="btn-sec" onClick={downloadExcel}><IconDownload />Excel</button>
         </div>
       </div>
 
       {!rows.length ? <div className="card text-sm" style={{ color: RC.muted }}>В выбранном срезе нет позиций.</div> : <>
         {/* KPI */}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div data-pdf className="grid gap-3 sm:grid-cols-3">
           <div className="rounded-2xl p-5 text-white" style={{ background: RC.navy }}>
             <p className="text-sm text-white/80">Средний рост цен в {year}</p>
             <p className="mt-1 text-3xl font-semibold">{fmtPct(total.total)}</p>
@@ -83,9 +136,9 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
           <Kpi label="Договоров в основе" value={contracts} note={`заключены в ${baseYear}`} />
         </div>
 
-        <Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} />
+        <div data-pdf><Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} /></div>
 
-        <div className="flex flex-wrap gap-4">
+        <div data-pdf data-pdf-page className="flex flex-wrap gap-4">
           {cats.length > 0 && (
             <Card title="Рост по категории" className="min-w-0 flex-[1_1_560px]">
               <Legend year={year} baseYear={baseYear} cpi={cpi} />
@@ -103,7 +156,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         <Regions rows={rows} year={year} baseYear={baseYear} />
 
         {sources.length > 0 && (
-          <p className="pt-2 text-center text-xs" style={{ color: RC.muted }}>
+          <p data-pdf className="pt-2 text-center text-xs" style={{ color: RC.muted }}>
             Источники:{" "}
             {sources.map((s, i) => <span key={s.code}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: RC.blue }}>{s.name}</a></span>)}
           </p>
@@ -281,7 +334,7 @@ function Bars({ groups: all, cpi }: { groups: Group[]; cpi: number | null }) {
         <span />
       </div>
       {all.length > 8 && (
-        <button type="button" className="mt-3 text-sm font-medium print:hidden" style={{ color: RC.blue }} onClick={() => setOpen(!open)}>
+        <button type="button" data-pdf-skip className="mt-3 text-sm font-medium print:hidden" style={{ color: RC.blue }} onClick={() => setOpen(!open)}>
           {open ? "Свернуть ▴" : `Показать все ${all.length} ▾`}
         </button>
       )}
@@ -292,9 +345,8 @@ function Bars({ groups: all, cpi }: { groups: Group[]; cpi: number | null }) {
 /** Сумма для отчёта: от 1 млн — в млн с одним знаком, меньше — с копейками */
 const money = (n: number) => (Math.abs(n) >= 1e6 ? `${fmtNum(n / 1e6)}\u00a0млн\u00a0₽` : fmtRub(n).replace(/\s/g, "\u00a0"));
 
-/** Цена по регионам: таблица по предметам, закупаемым в двух и более регионах. Без интерактива — одинаково на экране и в PDF */
-function Regions({ rows, year, baseYear }: { rows: ForecastRow[]; year: number; baseYear: number }) {
-  const items = useMemo(() => {
+/** Предметы, закупаемые в двух и более регионах: регионы по возрастанию прогноза */
+function regionTable(rows: ForecastRow[]) {
     const m = new Map<string, ForecastRow[]>();
     for (const r of rows) { const k = `${r.subject}|${r.unitLabel}`; m.get(k)?.push(r) ?? m.set(k, [r]); }
     return [...m.values()].map((rs) => {
@@ -306,47 +358,60 @@ function Regions({ rows, year, baseYear }: { rows: ForecastRow[]; year: number; 
       })).sort((x, y) => x.fc - y.fc);
       return { subject: rs[0].subject, unit: rs[0].unitLabel, regs, sum: rs.reduce((s, r) => s + r.basePrice * r.contracts, 0) };
     }).filter((x) => x.regs.length >= 2).sort((a, b) => b.sum - a.sum);
-  }, [rows]);
+}
+
+/** Цена по регионам: таблица по предметам, закупаемым в двух и более регионах. Без интерактива — одинаково на экране и в PDF */
+function Regions({ rows, year, baseYear }: { rows: ForecastRow[]; year: number; baseYear: number }) {
+  const items = useMemo(() => regionTable(rows), [rows]);
   if (!items.length) return null;
+  // Ширины колонок одинаковые во всех таблицах — заголовок и группы выравниваются
+  const cols = (
+    <colgroup><col /><col className="hidden w-36 sm:table-column" /><col className="w-36" /><col className="hidden w-44 sm:table-column" /></colgroup>
+  );
+  const head = (
+    <tr className="text-left text-xs uppercase tracking-wide" style={{ color: RC.muted }}>
+      <th className="py-2 pr-3 font-medium">Регион</th>
+      <th className="hidden py-2 pr-3 text-right font-medium sm:table-cell">Цена {baseYear}</th>
+      <th className="py-2 pr-3 text-right font-medium"><span className="hidden sm:inline">Прогноз {year}</span><span className="sm:hidden">Цена {baseYear} → прогноз {year}</span></th>
+      <th className="hidden py-2 pr-2 text-right font-medium sm:table-cell">Отличие от минимума</th>
+    </tr>
+  );
   return (
-    <Card title="Цена по регионам" sub="Один и тот же предмет в разных регионах стоит по-разному — ориентир берите по своему региону. Цены без НДС.">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-left text-xs uppercase tracking-wide" style={{ color: RC.muted }}>
-              <th className="py-2 pr-3 font-medium">Регион</th>
-              <th className="hidden py-2 pr-3 text-right font-medium sm:table-cell">Цена {baseYear}</th>
-              <th className="py-2 pr-3 text-right font-medium"><span className="hidden sm:inline">Прогноз {year}</span><span className="sm:hidden">Цена {baseYear} → прогноз {year}</span></th>
-              <th className="hidden py-2 text-right font-medium sm:table-cell">Отличие от минимума</th>
-            </tr>
-          </thead>
-          {items.map((it) => {
-            const min = it.regs[0].fc;
-            return (
-              <tbody key={`${it.subject}|${it.unit}`} className="break-inside-avoid">
-                <tr><td colSpan={4} className="border-t border-slate-200 pb-1 pt-3 font-semibold">{it.subject}, ₽/{it.unit}</td></tr>
-                {it.regs.map((r, i) => {
-                  const diff = min > 0 ? (r.fc / min - 1) * 100 : 0;
-                  const label = i === 0 ? "минимум" : `+${fmtNum(diff, diff < 10 ? 1 : 0)}\u00a0%`;
-                  return (
-                    <tr key={r.name} className="align-top">
-                      <td className="py-1 pr-3 pl-3" style={{ color: RC.ink }}>
-                        {r.name}
-                        <span className="block text-xs font-semibold sm:hidden" style={{ color: i === 0 ? RC.teal : RC.blue }}>{label}</span>
-                      </td>
-                      <td className="hidden whitespace-nowrap py-1 pr-3 text-right sm:table-cell" style={{ color: RC.muted }}>{money(r.base)}</td>
-                      <td className="whitespace-nowrap py-1 pr-3 text-right font-semibold">
-                        <span className="block text-xs font-normal sm:hidden" style={{ color: RC.muted }}>{money(r.base)}</span>{money(r.fc)}
-                      </td>
-                      <td className="hidden whitespace-nowrap py-1 text-right font-semibold sm:table-cell" style={{ color: i === 0 ? RC.teal : RC.blue }}>{label}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            );
-          })}
-        </table>
+    <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5">
+      {/* Каждая часть — отдельный снимок для PDF: группа предмета не разрывается между листами */}
+      <div data-pdf data-pdf-page className="bg-white">
+        <h2 className="text-lg font-semibold">Цена по регионам</h2>
+        <p className="mt-0.5 text-sm" style={{ color: RC.muted }}>Один и тот же предмет в разных регионах стоит по-разному — ориентир берите по своему региону. Цены без НДС.</p>
+        <table className="mt-3 w-full table-fixed text-sm max-sm:table-auto">{cols}<thead>{head}</thead></table>
       </div>
-    </Card>
+      {items.map((it) => {
+        const min = it.regs[0].fc;
+        return (
+          <table key={`${it.subject}|${it.unit}`} data-pdf className="w-full table-fixed bg-white text-sm max-sm:table-auto">
+            {cols}
+            <tbody>
+              <tr><td colSpan={4} className="border-t border-slate-200 pb-1 pt-3 font-semibold">{it.subject}, ₽/{it.unit}</td></tr>
+              {it.regs.map((r, i) => {
+                const diff = min > 0 ? (r.fc / min - 1) * 100 : 0;
+                const label = i === 0 ? "минимум" : `+${fmtNum(diff, diff < 10 ? 1 : 0)}\u00a0%`;
+                return (
+                  <tr key={r.name} className="align-top">
+                    <td className="py-1 pr-3 pl-3" style={{ color: RC.ink }}>
+                      {r.name}
+                      <span className="block text-xs font-semibold sm:hidden" style={{ color: i === 0 ? RC.teal : RC.blue }}>{label}</span>
+                    </td>
+                    <td className="hidden whitespace-nowrap py-1 pr-3 text-right sm:table-cell" style={{ color: RC.muted }}>{money(r.base)}</td>
+                    <td className="whitespace-nowrap py-1 pr-3 text-right font-semibold">
+                      <span className="block text-xs font-normal sm:hidden" style={{ color: RC.muted }}>{money(r.base)}</span>{money(r.fc)}
+                    </td>
+                    <td className="hidden whitespace-nowrap py-1 pr-2 text-right font-semibold sm:table-cell" style={{ color: i === 0 ? RC.teal : RC.blue }}>{label}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        );
+      })}
+    </section>
   );
 }
