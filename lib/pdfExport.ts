@@ -1,64 +1,34 @@
 "use client";
 /**
- * Выгрузка страницы в PDF: каждый блок с data-pdf снимается картинкой и раскладывается по листам A4 альбомной ориентации.
- * Высокий блок режется по строкам с data-pdf-row, чтобы группа не разрывалась между листами.
+ * Выгрузка страницы в PDF: каждый лист с data-pdf снимается картинкой и занимает одну страницу A4 альбомной ориентации.
  */
-export async function exportPdf(root: HTMLElement, filename: string, background = "#F2F4F8") {
+export async function exportPdf(root: HTMLElement, filename: string, background = "#FFFFFF") {
   const [{ toPng }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
   const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  const PW = 297, PH = 210, M = 10, W = PW - M * 2, H = PH - M * 2, GAP = 4;
-  let y = M;
-  const blocks = [...root.querySelectorAll<HTMLElement>("[data-pdf]")];
+  const PW = 297, PH = 210, M = 8, W = PW - M * 2, H = PH - M * 2 - 4;
+  const sheets = [...root.querySelectorAll<HTMLElement>("[data-pdf]")].filter((el) => el.getBoundingClientRect().height > 0);
   const fontEmbedCSS = await fontCss();
   const ratio = 2;
-  for (const block of blocks) {
-    const rect = block.getBoundingClientRect();
-    if (!rect.width || !rect.height) continue;
-    // Блок с data-pdf-page начинается с нового листа
-    if (block.dataset.pdfPage !== undefined && y > M) { pdf.addPage(); y = M; }
-    const url = await toPng(block, {
+  for (let i = 0; i < sheets.length; i++) {
+    const url = await toPng(sheets[i], {
       pixelRatio: ratio, backgroundColor: background, ...(fontEmbedCSS ? { fontEmbedCSS } : { skipFonts: true }),
       filter: (n) => !(n instanceof HTMLElement && n.dataset.pdfSkip !== undefined),
     });
     const img = await loadImage(url);
-    // Размеры берём с картинки: при снимке строки могут переноситься чуть иначе, чем на экране
-    const pxW = img.width / ratio, pxH = img.height / ratio;
-    const k = W / pxW; // мм на пиксель
-    const h = pxH * k;
-    const place = (src: string, hh: number) => {
-      if (y + hh > PH - M && y > M) { pdf.addPage(); y = M; }
-      pdf.addImage(src, "PNG", M, y, W, hh);
-      y += hh + GAP;
-    };
-    if (h <= H) { place(url, h); continue; }
-    // Режем по строкам с data-pdf-row; их положение пересчитываем в масштаб картинки
-    const sy = pxH / rect.height;
-    const cuts = [...block.querySelectorAll<HTMLElement>("[data-pdf-row]")].map((el) => (el.getBoundingClientRect().top - rect.top) * sy).filter((c) => c > 0);
-    let from = 0;
-    while (from < pxH - 1) {
-      const room = (y > M ? PH - M - y : H) / k;
-      let to = Math.min(pxH, from + room);
-      if (to < pxH) {
-        const fit = cuts.filter((c) => c > from + 1 && c <= to);
-        if (fit.length) to = fit[fit.length - 1] - 2;
-        else if (y > M) { pdf.addPage(); y = M; continue; }
-      }
-      place(crop(img, from * ratio, (to - from) * ratio), (to - from) * k);
-      from = to;
-    }
+    // Лист целиком на страницу: вписываем по ширине или высоте, без нарезки
+    const k = Math.min(W / img.width, H / img.height);
+    const w = img.width * k, h = img.height * k;
+    if (i > 0) pdf.addPage();
+    pdf.addImage(url, "PNG", M + (W - w) / 2, M, w, h);
+    pdf.setFontSize(8);
+    pdf.setTextColor(125, 132, 154);
+    pdf.text(`${i + 1} / ${sheets.length}`, PW - M, PH - 5, { align: "right" });
   }
   pdf.save(filename);
 }
 
 function loadImage(src: string) {
   return new Promise<HTMLImageElement>((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
-}
-
-function crop(img: HTMLImageElement, top: number, height: number) {
-  const c = document.createElement("canvas");
-  c.width = img.width; c.height = Math.max(1, Math.round(height));
-  c.getContext("2d")!.drawImage(img, 0, Math.round(top), img.width, c.height, 0, 0, img.width, c.height);
-  return c.toDataURL("image/png");
 }
 
 let fontCache: Promise<string> | null = null;

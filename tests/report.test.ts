@@ -51,3 +51,14 @@ describe("шкала колец", () => {
     expect(radialMax(12.1)).toBe(19.5);
   });
 });
+
+import { shortRegion } from "@/lib/report";
+describe("короткие названия регионов", () => {
+  it("по словарю и по правилам", () => {
+    expect(shortRegion("г. Санкт-Петербург")).toBe("СПб");
+    expect(shortRegion("Ханты-Мансийский автономный округ — Югра")).toBe("ХМАО — Югра");
+    expect(shortRegion("Омская область")).toBe("Омская");
+    expect(shortRegion("Республика Татарстан")).toBe("Татарстан");
+    expect(shortRegion("Пермский край")).toBe("Пермский");
+  });
+});

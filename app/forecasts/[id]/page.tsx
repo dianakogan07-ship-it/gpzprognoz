@@ -186,7 +186,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
 
         {tab === "forecast" && <>
         <p className="text-sm text-slate-700">
-          закупок {s.contracts} · позиций {s.items} · средний рост {fmtGrowth(s.growth)}
+          договоров {s.contracts} · позиций {s.items} · средний рост {fmtGrowth(s.growth)}
         </p>
         {s.excluded > 0 && (
           <p className="text-sm text-slate-500">

@@ -2,8 +2,8 @@ import type { ForecastRow } from "./forecast";
 
 /** Цвета отчёта */
 export const RC = {
-  navy: "#101A7A", blue: "#1E4FD8", sky: "#4FB3F6", violet: "#7B5CE6", teal: "#14B8A6",
-  bg: "#F2F4F8", ink: "#141B34", muted: "#5B6478", track: "#E6EAF2",
+  navy: "#141A7A", sky: "#4FB3F5", blue: "#1F4FD8", violet: "#7B5CE6", teal: "#0F8A6A",
+  bg: "#F2F4F8", ink: "#141827", ink2: "#4A5168", muted: "#7D849A", line: "#E4E7EF", track: "#EEF0F6", span: "#C9D6F7", warn: "#B45309",
 } as const;
 
 /** Средний рост группы — та же формула, что «средний рост» в шапке прогноза: сумма прогнозов к сумме цен, % */
@@ -64,3 +64,22 @@ export const radialMax = (maxTotal: number) => Math.max(10, Math.ceil(Math.max(0
 export const fmtNum = (n: number, d = 1) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, " ");
 export const fmtPct = (n: number, sign = true) => `${sign ? (n < 0 ? "−" : "+") : n < 0 ? "−" : ""}${fmtNum(Math.abs(n))} %`;
 export const fmtRubInt = (n: number) => `${Math.round(n).toLocaleString("ru-RU").replace(/\s/g, " ")} ₽`;
+
+/** Короткое название региона для подписей графиков */
+export function shortRegion(name: string): string {
+  const fixed: Record<string, string> = {
+    "г. Санкт-Петербург": "СПб", "г. Москва": "Москва", "г. Севастополь": "Севастополь",
+    "Ханты-Мансийский автономный округ — Югра": "ХМАО — Югра", "Ямало-Ненецкий автономный округ": "ЯНАО",
+    "Ненецкий автономный округ": "НАО", "Чукотский автономный округ": "Чукотка", "Еврейская автономная область": "ЕАО",
+    "Кемеровская область — Кузбасс": "Кемеровская", "Республика Северная Осетия — Алания": "Сев. Осетия",
+  };
+  if (fixed[name]) return fixed[name];
+  return name.replace(/\s+область$/, "").replace(/\s+край$/, "").replace(/^Республика\s+/, "").replace(/\s+Республика$/, "");
+}
+
+/** Отметки оси от min до max с шагом step */
+export const ticks = (min: number, max: number, step: number) => {
+  const out: number[] = [];
+  for (let v = min; v <= max + 1e-9; v += step) out.push(Math.round(v * 100) / 100);
+  return out;
+};
