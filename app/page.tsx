@@ -7,7 +7,7 @@ import { Menu, type MenuItem } from "@/components/Menu";
 import { PromptModal } from "@/components/PromptModal";
 import { IconPlus } from "@/components/Icons";
 import { exportVersion } from "@/lib/forecasts/client";
-import { PICK_STATUSES, STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
+import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
 import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { plural } from "@/lib/forecastView";
@@ -26,23 +26,13 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
   const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
   const money = moneyOf(s.forecastSum);
   const archived = c.status === "archived";
-  const tail: MenuItem[] = [
-    { label: "Изменить карточку", onClick: () => onAction(c, "edit") },
-    ...(archived ? [] : [{ label: "Загрузить новые файлы", onClick: () => onAction(c, "files") }]),
+  const items: MenuItem[] = [
+    ...(archived ? [] : [{ label: "Редактировать", onClick: () => onAction(c, "edit") }]),
+    { label: "Сравнить", onClick: () => onAction(c, "compare") },
+    { label: "История", onClick: () => onAction(c, "history") },
+    ...(archived ? [] : [{ label: "В архив", onClick: () => onAction(c, "archive") }]),
     { label: "Удалить", onClick: () => onAction(c, "delete"), danger: true },
   ];
-  const items: MenuItem[] = archived
-    ? [{ label: "Открыть", onClick: () => onAction(c, "open") }, { label: "История", onClick: () => onAction(c, "history") }, { label: "Сравнить", onClick: () => onAction(c, "compare") }, ...tail]
-    : [
-      { label: "Открыть", onClick: () => onAction(c, "open") },
-      { label: "Новая версия", onClick: () => onAction(c, "version") },
-      { label: "Сравнить", onClick: () => onAction(c, "compare") },
-      { label: "История", onClick: () => onAction(c, "history") },
-      { label: "Выгрузить в Excel", onClick: () => onAction(c, "export") },
-      ...PICK_STATUSES.filter((st) => st !== c.status).map((st) => ({ label: `Статус: ${STATUS_TITLE[st].toLowerCase()}`, onClick: () => onAction(c, `status:${st}`) })),
-      { label: "В архив", onClick: () => onAction(c, "archive") },
-      ...tail,
-    ];
   return (
     <div role="link" tabIndex={0} onClick={() => router.push(`/forecasts/${c.id}`)} onKeyDown={(e) => e.key === "Enter" && router.push(`/forecasts/${c.id}`)}
       className="flex cursor-pointer flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
@@ -137,13 +127,6 @@ export default function ForecastsPage() {
         await api(`/api/forecasts/${c.id}`, "DELETE"); setMsg(`Прогноз «${c.title}» удалён`); await load();
       }
       if (a === "export" && reference) await exportVersion(c, c.version_id, c.version, reference.sources);
-      if (a.startsWith("status:")) {
-        const to = a.slice(7) as ForecastStatus;
-        if (to !== "approved" || confirm(`Утвердить «${c.title}»? Изменения после этого будут сохраняться новыми версиями.`)) {
-          await api(`/api/forecasts/${c.id}/status`, "POST", { to }); await load();
-          setMsg(`«${c.title}»: статус «${STATUS_TITLE[to]}»`);
-        }
-      }
       if (a === "archive" && confirm(`Перенести «${c.title}» в архив? Изменить его будет нельзя.`)) {
         await api(`/api/forecasts/${c.id}/status`, "POST", { to: "archived" }); await load();
       }
