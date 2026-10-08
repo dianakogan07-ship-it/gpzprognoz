@@ -122,7 +122,7 @@ export default function LogicPage() {
       warn: s3.branch !== "industry",
       info: <>{s3.branch === "industry" ? `Отрасль: ${industry}.` : `Индекса отрасли нет — взята общая инфляция.`} {s3.idx?.source && <SrcLink s={s3.idx.source} />} {statusText(s3.idx) && `Индекс ${statusText(s3.idx)}.`} Вкладка «{s3.branch === "industry" ? `Рост цен по отраслям ${ty}` : `Общая инфляция ${ty}`}».</>,
       what: `Умножаем цену на ожидаемый рост цен в отрасли позиции в ${ty} году. Отрасль определяем по коду ОКПД2 из ГПЗ.`, tab: s3.branch === "industry" ? "forecast" : "cpi" },
-    { n: 4, value: rub(ex.withVat), sub: `${rub(ex.forecastPrice)} без НДС`, caption: `с НДС ${Math.round(ex.vat * 100)} %`,
+    { n: 4, value: rub(ex.forecastPrice), sub: `${rub(ex.withVat)} с НДС ${Math.round(ex.vat * 100)} %`, caption: "без НДС",
       info: <>{ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
       what: "Получаем прогноз сразу в двух видах: без НДС и с НДС по ставке из строки ГПЗ.", tab: null },
   ];

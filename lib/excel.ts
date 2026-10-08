@@ -25,6 +25,8 @@ export function forecastWorkbook(res: ForecastResult, sources: Source[], targetY
     "Источник индекса": r.indexSource,
     "Ссылка на источник": r.indexSourceUrl,
     [`Прогноз ${targetYear}, ₽ без НДС`]: r.forecastPrice,
+    "Ставка НДС, %": Math.round((r.vatRate ?? 0.22) * 100),
+    [`Прогноз ${targetYear}, ₽ с НДС`]: Math.round(r.forecastPrice * (1 + (r.vatRate ?? 0.22)) * 100) / 100,
     "Повторяющаяся": yesNo(r.repeatable),
     "Статус": STATUS_LABEL[statusOf(r)],
     "Причины": reasonsOf(r).map((x) => REASON_TEXT[x]).join("; "),
@@ -37,7 +39,7 @@ export function forecastWorkbook(res: ForecastResult, sources: Source[], targetY
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sources.map((s) => ({ "Код": s.code, "Источник": s.name, "Ссылка": s.url, "Проверен": s.verified ? "да" : "нет", "Примечание": s.note ?? "" }))), "Источники");
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
     ...VAT_RATES.map((v) => ({ "Ставка НДС": v.rate, "Основание": v.basis })),
-    { "Ставка НДС": "", "Основание": "Цены в прогнозе указаны без НДС. Ставка зависит от контрагента и предмета договора." },
+    { "Ставка НДС": "", "Основание": "Прогноз с НДС посчитан по ставке из ГПЗ; если ставки в файле нет — по основной ставке 22 %." },
   ]), "НДС (справочно)");
   return wb;
 }

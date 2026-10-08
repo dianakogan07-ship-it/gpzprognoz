@@ -2,6 +2,7 @@
 import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IconDownload, IconEdit, IconHelp } from "./Icons";
+import { DEFAULT_VAT } from "@/lib/logic";
 import { Chip, MultiSelect } from "./MultiSelect";
 import {
   CONTRACTS_LABEL, EMPTY_FILTERS, FLAG_LABEL, REASON_TEXT, REPEAT_LABEL, SOURCE_LABEL, STATUS_LABEL,
@@ -163,11 +164,11 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
     ...f.flags.map((s) => ({ key: `f${s}`, label: FLAG_LABEL[s], remove: () => set({ flags: f.flags.filter((x) => x !== s) }) })),
   ];
   // Сколько фильтров включено в «Ещё фильтры»
-  const moreCount = f.category.length + f.method.length + f.source.length + f.contracts.length + f.repeat.length + f.flags.length
+  const moreCount = f.method.length + f.source.length + f.contracts.length + f.repeat.length + f.flags.length
     + (f.okpd ? 1 : 0) + (f.growthMin != null || f.growthMax != null ? 1 : 0);
   const toggleRow = (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const hasMethods = counts.method.size > 1 || !counts.method.has("");
-  const cols = 8;
+  const cols = 10;
 
   return (
     <>
@@ -181,6 +182,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             {/* Фильтры */}
             <div className="flex flex-wrap items-center gap-2">
               <input className="inp w-72 py-1.5" placeholder="Поиск по предмету или коду ОКПД2" value={qInput} onChange={(e) => setQInput(e.target.value)} />
+              <MultiSelect label="Категория" value={f.category} onChange={(category) => set({ category })}
+                options={[...counts.cat.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Без категории", count: n }))} />
               <MultiSelect label="Регион" searchable value={f.region} onChange={(region) => set({ region })}
                 options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
               <MultiSelect label="Статус" value={f.status} onChange={(v) => set({ status: v as Status[] })}
@@ -195,8 +198,6 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             <div className={`grid transition-all duration-200 ${more ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0"}`}>
               <div className={more ? "" : "overflow-hidden"}>
                 <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <MultiSelect label="Категория" value={f.category} onChange={(category) => set({ category })}
-                    options={[...counts.cat.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Без категории", count: n }))} />
                   {hasMethods && <MultiSelect label="Способ закупки" value={f.method} onChange={(method) => set({ method })}
                     options={[...counts.method.entries()].sort().map(([c, n]) => ({ value: c, label: c || "Не указан", count: n }))} />}
                   <input className="inp w-32 py-1.5" placeholder="Код ОКПД2" title="Начало кода ОКПД2, например 28 или 09.10" value={f.okpd} onChange={(e) => set({ okpd: e.target.value })} />
@@ -223,16 +224,18 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             )}
 
             {/* Таблица */}
-            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[680px]">
-              <colgroup><col className="w-8" /><col /><col className="w-44" /><col className="w-16" /><col className="w-36" /><col className="w-40" /><col className="w-10" /><col className="w-20" /></colgroup>
+            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[980px]">
+              <colgroup><col className="w-8" /><col /><col className="w-40" /><col className="w-36" /><col className="w-14" /><col className="w-32" /><col className="w-36" /><col className="w-32" /><col className="w-10" /><col className="w-20" /></colgroup>
               <thead>
                 <tr>
                   <th />
                   <SortTh k="subject" f={f} set={set}>Предмет</SortTh>
+                  <th>Категория</th>
                   <SortTh k="region" f={f} set={set}>Регион</SortTh>
                   <th>Ед.</th>
-                  <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
-                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
+                  <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear} без НДС</SortTh>
+                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear} без НДС</SortTh>
+                  <th className="text-right">Прогноз {targetYear} с НДС</th>
                   <th><span className="sr-only">Статус</span></th>
                   <th />
                 </tr>
@@ -250,12 +253,17 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                       <tr className={`group cursor-pointer ${open ? "bg-brand-light/40" : ""}`} onClick={() => toggleRow(v.id)}>
                         <td className="text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
                         <td className="break-words text-slate-900">{r.subject}</td>
+                        <td className="break-words text-slate-700">{r.category ?? <span className="text-slate-400">—</span>}</td>
                         <td className="break-words text-slate-700">{r.regionName ?? r.region ?? "—"}</td>
                         <td className="text-slate-700">{r.unitLabel}</td>
                         <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
                         <td className="text-right">
                           <div className="whitespace-nowrap text-base font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</div>
                           <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
+                        </td>
+                        <td className="text-right" title={r.vatRate == null ? "Ставки НДС нет в файлах — взята 22 %" : undefined}>
+                          <div className="whitespace-nowrap text-slate-900">{fmtRub(Math.round(r.forecastPrice * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100)}</div>
+                          <div className="text-xs text-slate-400">НДС {Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %{r.vatRate == null ? "*" : ""}</div>
                         </td>
                         <td className="text-center"><StatusDot v={v} hidden={hint?.reason ?? null} /></td>
                         <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>

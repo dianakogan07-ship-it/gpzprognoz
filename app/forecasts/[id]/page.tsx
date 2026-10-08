@@ -98,7 +98,8 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
     window.history.replaceState(null, "", p.toString() ? `?${p}` : window.location.pathname);
   }, [versionId, f]);
 
-  const view = useMemo(() => (data ? toViewRows(data.rows, data.metas) : []), [data]);
+  // Категория из ГПЗ, а если её нет — из справочника кодов WS
+  const view = useMemo(() => (data ? toViewRows(data.rows.map((r) => (r.category || !r.ws ? r : { ...r, category: reference?.ws.find((w) => w.code === r.ws)?.category ?? null })), data.metas) : []), [data, reference]);
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!f || !data || !versionId) return <p className="hint">Загрузка…</p>;
 
@@ -183,7 +184,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
                 {v.meta.reviewed ? "✓ Проверено — снять отметку" : "Отметить как проверенное"}
               </button>
             )}
-            <Link href={`/forecasts/${id}/history?okpd=${encodeURIComponent(v.row.okpd2)}`} className="text-brand hover:underline">История изменений по {v.row.okpd2}</Link>
+            <Link href={`/forecasts/${id}/history?okpd=${encodeURIComponent(v.row.okpd2)}`} className="text-brand hover:underline">История изменений позиции</Link>
           </div>
         )} />
 
