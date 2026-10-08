@@ -16,7 +16,10 @@ export function Header() {
   return (
     <header className="border-b border-slate-200 bg-white">
       <nav className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-3">
-        <span className="mr-6 hidden font-semibold text-brand sm:inline">Прогноз цен ГПЗ</span>
+        <Link href="/" className="mr-4 shrink-0" title="На главную">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Ориентир ГПЗ" width={1000} height={142} className="h-6 w-auto sm:h-7" />
+        </Link>
         {NAV.map(([href, label]) => (
           <Link key={href} href={href}
             className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${path === href || (href === "/" && path.startsWith("/forecasts")) ? "bg-brand-light text-brand" : "text-slate-600 hover:bg-slate-100"}`}>{label}</Link>
