@@ -159,11 +159,14 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         </div>
 
         <p className="text-sm text-slate-700">
-          {s.items} {plural(s.items, "позиция", "позиции", "позиций")} · средний рост {fmtGrowth(s.growth)} · ручных правок: {s.edits}
-          {s.excluded > 0 && <> · {f.excluded.length
-            ? <button className="text-brand hover:underline" onClick={() => setShowExcluded(true)}>не вошли {s.excluded}</button>
-            : <span>не вошли {s.excluded}</span>}</>}
+          закупок {s.contracts} · позиций {s.items} · средний рост {fmtGrowth(s.growth)}
         </p>
+        {s.excluded > 0 && (
+          <p className="text-sm text-slate-500">
+            {s.excluded} {plural(s.excluded, "строка", "строки", "строк")} из файлов не {plural(s.excluded, "попала", "попали", "попали")} в расчёт: по ним нет заключённого договора, цены или количества.{" "}
+            {f.excluded.length > 0 && <button className="text-brand hover:underline" onClick={() => setShowExcluded(true)}>Посмотреть</button>}
+          </p>
+        )}
 
         {f.newIndices && isCurrent && !archived && (
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
