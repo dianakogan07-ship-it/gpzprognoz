@@ -3,41 +3,29 @@
  * Выгрузка страницы в PDF: каждый лист с data-pdf снимается картинкой и занимает одну страницу A4 альбомной ориентации.
  */
 export async function exportPdf(root: HTMLElement, filename: string, background = "#FFFFFF") {
-  const [{ toPng }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
-  const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  const [{ toCanvas }, { jsPDF }] = await Promise.all([import("html-to-image"), import("jspdf")]);
+  const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4", compress: true });
   const PW = 297, PH = 210, M = 8, W = PW - M * 2, H = PH - M * 2 - 4;
   const sheets = [...root.querySelectorAll<HTMLElement>("[data-pdf]")].filter((el) => el.getBoundingClientRect().height > 0);
   const fontEmbedCSS = await fontCss();
   const ratio = 2;
   for (let i = 0; i < sheets.length; i++) {
-    const url = await toPng(sheets[i], {
+    const canvas = await toCanvas(sheets[i], {
       pixelRatio: ratio, backgroundColor: background, ...(fontEmbedCSS ? { fontEmbedCSS } : { skipFonts: true }),
-      // Внешние отступы блока (space-y и т. п.) в снимке сдвигают содержимое и обрезают низ — убираем
+      // Внешние отступы листа в снимке сдвигают содержимое и обрезают низ — убираем
       style: { margin: "0" },
       filter: (n) => !(n instanceof HTMLElement && n.dataset.pdfSkip !== undefined),
     });
-    const img = await loadImage(url);
-    // Лист целиком на страницу: вписываем по ширине или высоте, без нарезки
-    const k = Math.min(W / img.width, H / img.height);
-    const w = img.width * k, h = img.height * k;
+    // Лист целиком на страницу: вписываем по ширине или высоте, без нарезки. JPEG — файл в разы легче PNG
+    const k = Math.min(W / canvas.width, H / canvas.height);
+    const w = canvas.width * k, h = canvas.height * k;
     if (i > 0) pdf.addPage();
-    pdf.addImage(url, "PNG", M + (W - w) / 2, M, w, h);
+    pdf.addImage(canvas.toDataURL("image/jpeg", 0.92), "JPEG", M + (W - w) / 2, M, w, h, undefined, "FAST");
     pdf.setFontSize(8);
     pdf.setTextColor(125, 132, 154);
     pdf.text(`${i + 1} / ${sheets.length}`, PW - M, PH - 5, { align: "right" });
   }
-  // Номера страниц
-  const n = pdf.getNumberOfPages();
-  if (n > 1) {
-    pdf.setFontSize(8);
-    pdf.setTextColor(150);
-    for (let i = 1; i <= n; i++) { pdf.setPage(i); pdf.text(`${i} / ${n}`, PW - M, PH - M + 1, { align: "right" }); }
-  }
   pdf.save(filename);
-}
-
-function loadImage(src: string) {
-  return new Promise<HTMLImageElement>((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = src; });
 }
 
 let fontCache: Promise<string> | null = null;
