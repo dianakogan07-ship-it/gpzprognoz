@@ -32,3 +32,13 @@ describe("отчёт: раскладка роста", () => {
     for (const x of g) expect(x.intra + x.industry).toBeCloseTo(x.total, 10);
   });
 });
+
+import { districtOf } from "@/lib/districts";
+describe("федеральные округа", () => {
+  it("по коду ОКАТО", () => {
+    expect(districtOf("40")).toBe("Северо-Западный");
+    expect(districtOf("45")).toBe("Центральный");
+    expect(districtOf("71100")).toBe("Уральский");
+    expect(districtOf(null)).toBeNull();
+  });
+});

@@ -5,6 +5,7 @@ import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
 import { EMPTY_FILTERS, filterRows, regionKey, type ViewRow } from "@/lib/forecastView";
 import { lastDataMonth } from "@/lib/logic";
+import { DISTRICTS, districtOf } from "@/lib/districts";
 import { RC, evenCeil, fmtNum, fmtPct, fmtRubInt, groupSplit, splitGrowth } from "@/lib/report";
 import { isActiveIndex, type Reference } from "@/lib/types";
 import type { ForecastRow } from "@/lib/forecast";
@@ -16,10 +17,10 @@ const SOURCE_CODES = ["MER_FORECAST", "ROSSTAT_ICP", "CBR"];
  * Отчёт для закупщиков: только итог и его обоснование, без технических пометок.
  * Срез — общие с вкладкой «Прогноз» фильтры «Категория» и «Регион»; статус не учитывается.
  */
-export function ForecastReport({ view, filters, reference, year, baseYear, approved, approvedAt, title, onShowAll, onExcel }: {
+export function ForecastReport({ view, filters, reference, year, baseYear, approved, approvedAt, title, onExcel }: {
   view: ViewRow[]; filters: ForecastFilters; reference: Reference;
   year: number; baseYear: number; approved: boolean; approvedAt: string | null; title: string;
-  onShowAll: () => void; onExcel: (rows: ViewRow[]) => void;
+  onShowAll?: () => void; onExcel: (rows: ViewRow[]) => void;
 }) {
   const { f, set } = filters;
   const slice = useMemo(() => filterRows(view, { ...EMPTY_FILTERS, category: f.category, region: f.region }), [view, f.category, f.region]);
@@ -85,21 +86,16 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
 
         <Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} />
 
-        <div className="grid gap-4 lg:grid-cols-2 print:grid-cols-2">
-          {cats.length > 0 && (
-            <Card title="Рост по категории">
-              <Legend year={year} baseYear={baseYear} cpi={cpi} />
-              <Radial groups={cats.map((c) => ({ ...c, label: shortCat(c.key) }))} cpi={cpi} />
-            </Card>
-          )}
-          {subjects.length > 0 && (
-            <Card title="Рост по предмету закупки">
-              <Legend year={year} baseYear={baseYear} cpi={cpi} />
-              <Bars groups={subjects.slice(0, 8)} cpi={cpi} />
-              <button className="mt-3 text-sm font-medium hover:underline print:hidden" style={{ color: RC.blue }} onClick={onShowAll}>Все {rows.length} позиций →</button>
-            </Card>
-          )}
-        </div>
+        {cats.length > 0 && (
+          <DistrictCard title="Рост по категории" rows={rows} year={year} baseYear={baseYear} cpi={cpi}>
+            {(rs) => <Radial groups={groupSplit(rs, (r) => r.category ?? "").map((c) => ({ ...c, label: shortCat(c.key) }))} cpi={cpi} />}
+          </DistrictCard>
+        )}
+        {subjects.length > 0 && (
+          <DistrictCard title="Рост по предмету закупки" rows={rows} year={year} baseYear={baseYear} cpi={cpi}>
+            {(rs) => <Bars groups={groupSplit(rs, (r) => r.subject)} cpi={cpi} />}
+          </DistrictCard>
+        )}
 
         <Regions rows={rows} year={year} baseYear={baseYear} />
 
@@ -124,10 +120,10 @@ function Kpi({ label, value, note }: { label: string; value: number; note: strin
   );
 }
 
-function Card({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
+function Card({ title, sub, action, children }: { title: string; sub?: string; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="min-w-0 break-inside-avoid rounded-2xl border border-slate-200 bg-white p-5">
-      <h2 className="text-lg font-semibold">{title}</h2>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">{title}</h2>{action}</div>
       {sub && <p className="mt-0.5 text-sm" style={{ color: RC.muted }}>{sub}</p>}
       <div className="mt-3">{children}</div>
     </section>
@@ -210,10 +206,11 @@ function Radial({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
   const cpiDeg = cpi != null ? ang(cpi) : null;
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-      <svg viewBox="0 0 300 300" className="mx-auto w-full max-w-[300px] shrink-0" role="img" aria-label="Рост по категории">
+      <svg viewBox="-10 -10 320 320" className="mx-auto w-full max-w-[320px] shrink-0" role="img" aria-label="Рост по категории">
         {rings.map((g, i) => {
           const r = R - i * (ring + gap);
-          const a = ang(g.intra), b = ang(g.intra + g.industry);
+          // Отрицательная часть не рисуется: синяя дуга заканчивается на итоге
+          const a = ang(Math.min(g.intra, g.total)), b = ang(g.total);
           return (
             <g key={g.key}>
               <path d={arc(r, 0, 270)} stroke={RC.track} strokeWidth={ring} fill="none" />
@@ -229,8 +226,8 @@ function Radial({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
             <g>
               <line x1={x0} y1={y0} x2={x1} y2={y1} stroke="#fff" strokeWidth={5} />
               <line x1={x0} y1={y0} x2={x1} y2={y1} stroke={RC.navy} strokeWidth={2} strokeDasharray="4 3" />
-              <rect x={Math.min(Math.max(bx - 22, 0), 256)} y={by - 10} width={44} height={20} rx={5} fill={RC.navy} />
-              <text x={Math.min(Math.max(bx, 22), 278)} y={by + 4} textAnchor="middle" fontSize={11} fontWeight={600} fill="#fff">{fmtNum(cpi!)}&nbsp;%</text>
+              <rect x={Math.min(Math.max(bx, 14), 286) - 24} y={Math.min(Math.max(by, 2), 298) - 10} width={48} height={20} rx={5} fill={RC.navy} />
+              <text x={Math.min(Math.max(bx, 14), 286)} y={Math.min(Math.max(by, 2), 298) + 4} textAnchor="middle" fontSize={11} fontWeight={600} fill="#fff">{fmtNum(cpi!)}&nbsp;%</text>
             </g>
           );
         })()}
@@ -251,8 +248,10 @@ function Radial({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
 }
 
 /** Полосы по предметам закупки: две части роста и пунктир инфляции */
-function Bars({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
-  const max = evenCeil(Math.max(...groups.map((g) => g.total), cpi ?? 0));
+function Bars({ groups: all, cpi }: { groups: Group[]; cpi: number | null }) {
+  const [open, setOpen] = useState(false);
+  const groups = open ? all : all.slice(0, 8);
+  const max = evenCeil(Math.max(...all.map((g) => g.total), cpi ?? 0));
   const pct = (v: number) => `${(Math.max(0, v) / max) * 100}%`;
   return (
     <div>
@@ -261,8 +260,8 @@ function Bars({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
           <li key={g.key} className="grid grid-cols-[8rem_minmax(0,1fr)_4rem] items-center gap-3 sm:grid-cols-[12rem_minmax(0,1fr)_4.5rem]">
             <span className="hyphens-auto break-words text-sm leading-tight" lang="ru">{g.key}</span>
             <span className="relative h-4 overflow-hidden rounded" style={{ background: RC.bg }}>
-              <span className="absolute inset-y-0 left-0" style={{ width: pct(g.intra), background: RC.sky }} />
-              <span className="absolute inset-y-0" style={{ left: pct(g.intra), width: pct(g.industry), background: RC.blue }} />
+              <span className="absolute inset-y-0 left-0" style={{ width: pct(Math.min(g.intra, g.total)), background: RC.sky }} />
+              <span className="absolute inset-y-0" style={{ left: pct(Math.min(g.intra, g.total)), width: pct(g.total - Math.max(0, Math.min(g.intra, g.total))), background: RC.blue }} />
               {cpi != null && <span className="absolute -inset-y-1 border-l-2 border-dashed" style={{ left: pct(cpi), borderColor: RC.navy }} />}
             </span>
             <span className="whitespace-nowrap text-right text-sm font-semibold">{fmtPct(g.total)}</span>
@@ -274,7 +273,35 @@ function Bars({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
         <span className="flex justify-between"><span>0&nbsp;%</span><span>{fmtNum(max / 2, 0)}&nbsp;%</span><span>{fmtNum(max, 0)}&nbsp;%</span></span>
         <span />
       </div>
+      {all.length > 8 && (
+        <button type="button" className="mt-3 text-sm font-medium print:hidden" style={{ color: RC.blue }} onClick={() => setOpen(!open)}>
+          {open ? "Свернуть ▴" : `Показать все ${all.length} ▾`}
+        </button>
+      )}
     </div>
+  );
+}
+
+/** Карточка графика с выбором федерального округа */
+function DistrictCard({ title, rows, year, baseYear, cpi, children }: {
+  title: string; rows: ForecastRow[]; year: number; baseYear: number; cpi: number | null; children: (rows: ForecastRow[]) => ReactNode;
+}) {
+  const [d, setD] = useState("");
+  const present = DISTRICTS.filter((x) => rows.some((r) => districtOf(r.region) === x));
+  const rs = d ? rows.filter((r) => districtOf(r.region) === d) : rows;
+  return (
+    <Card title={title} action={present.length > 1 ? (
+      <>
+        <select className="inp w-auto py-1.5 print:hidden" value={d} onChange={(e) => setD(e.target.value)} aria-label="Федеральный округ">
+          <option value="">Все округа</option>
+          {present.map((x) => <option key={x} value={x}>{x} ФО</option>)}
+        </select>
+        {d && <span className="hidden text-sm print:inline" style={{ color: RC.muted }}>{d} ФО</span>}
+      </>
+    ) : undefined}>
+      <Legend year={year} baseYear={baseYear} cpi={cpi} />
+      {rs.length ? children(rs) : <p className="text-sm" style={{ color: RC.muted }}>В этом округе нет позиций.</p>}
+    </Card>
   );
 }
 

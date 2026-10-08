@@ -208,7 +208,6 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
       {tab === "report" && reference && (
         <ForecastReport view={view} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
           approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null}
-          onShowAll={() => setTab("forecast")}
           onExcel={(rows) => exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")} />
       )}
       {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
