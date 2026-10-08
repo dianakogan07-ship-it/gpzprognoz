@@ -221,8 +221,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             )}
 
             {/* Таблица */}
-            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[1180px]">
-              <colgroup><col className="w-8" /><col /><col className="w-28" /><col className="w-28" /><col className="w-12" /><col className="w-24" /><col className="w-28" /><col className="w-24" /><col className="w-32" /><col className="w-44" /><col className="w-16" /></colgroup>
+            <div className="overflow-x-auto"><table className="tbl min-w-[1100px]">
+              
               <thead>
                 <tr>
                   <th />
@@ -249,10 +249,10 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   return (
                     <Fragment key={v.id}>
                       <tr className={`group cursor-pointer ${open ? "bg-brand-light/40" : ""}`} onClick={() => toggleRow(v.id)}>
-                        <td className="text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
-                        <td className="break-words text-slate-900">{r.subject}</td>
-                        <td className="hyphens-auto text-slate-700" lang="ru">{r.category ?? <span className="text-slate-400">—</span>}</td>
-                        <td className="break-words text-slate-700">{r.regionName ?? r.region ?? "—"}</td>
+                        <td className="w-6 text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
+                        <td className="min-w-[11rem] break-words text-slate-900">{r.subject}</td>
+                        <td className="min-w-[7rem] max-w-[11rem] hyphens-auto text-slate-700" lang="ru">{r.category ?? <span className="text-slate-400">—</span>}</td>
+                        <td className="min-w-[7rem] max-w-[10rem] break-words text-slate-700">{r.regionName ?? r.region ?? "—"}</td>
                         <td className="text-slate-700">{r.unitLabel}</td>
                         <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
                         <td className="text-right">
@@ -264,7 +264,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                           <div className="text-xs text-slate-400">НДС {Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %{r.vatRate == null ? "*" : ""}</div>
                         </td>
                         <td onClick={(e) => e.stopPropagation()}><StatusPick v={v} onChange={onReview} /></td>
-                        <td className="text-xs leading-snug text-slate-600">
+                        <td className="min-w-[13rem] max-w-[16rem] text-xs leading-snug text-slate-600">
                           {v.reasons.map((x) => <p key={x}>{REASON_TEXT[x]}</p>)}
                           {v.meta?.edited && <p className="text-brand">Есть ручные правки</p>}
                         </td>
