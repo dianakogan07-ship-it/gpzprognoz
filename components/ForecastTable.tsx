@@ -330,7 +330,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             <button className="btn" onClick={() => setCard(null)}>Закрыть</button>
           </>}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {([[`Цена ${baseYear}`, fmtRub(card.row.basePrice)], [`Прогноз ${targetYear}`, fmtRub(card.row.forecastPrice)], ["С НДС", fmtRub(withVat(card.row))], ["Рост", fmtGrowth(card.growth)]] as const).map(([l, val]) => (
+            {([[`Цена ${baseYear} без НДС`, fmtRub(card.row.basePrice)], [`Прогноз ${targetYear} без НДС`, fmtRub(card.row.forecastPrice)], [`Прогноз ${targetYear} с НДС`, fmtRub(withVat(card.row))], ["Рост", fmtGrowth(card.growth)]] as const).map(([l, val]) => (
               <div key={l} className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">{l}</p><p className="font-semibold text-slate-900">{val}</p></div>
             ))}
           </div>
