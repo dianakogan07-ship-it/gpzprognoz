@@ -111,9 +111,9 @@ export default function LogicPage() {
   const step2Caption = s2.state === "off" ? "пересчёт не загружен" : s2.state === "not_needed" ? "договор декабря" : s2.state === "none" ? "нет данных за месяц"
     : ex.months.length > 1 ? "рост внутри года, в среднем" : `рост с ${MONTHS_GEN_FROM(m0)} по ${s2.lastMonth ? MONTHS[s2.lastMonth - 1] : "последний месяц"}`;
   const steps = [
-    { n: 1, value: rub(ex.price), caption: ex.contracts > 1 ? "средняя цена договоров" : "цена договора",
+    { n: 1, value: rub(ex.price), caption: ex.contracts > 1 ? "медиана цен договоров" : "цена договора",
       info: <>Фактическая цена из отчётности за {by} год, за единицу и без НДС.{ex.contracts > 1 ? ` Договоров: ${ex.contracts}, взята медиана.` : ""}</>,
-      what: `Берём цену из договора ${by} года по отчётности — за единицу и без НДС. Если договоров несколько, берём среднюю цену.`, tab: null },
+      what: `Берём цену из договора ${by} года по отчётности — за единицу и без НДС. Если договоров несколько, берём медиану — цену из середины списка, а цены, отличающиеся больше чем в 2 раза, не учитываем.`, tab: null },
     { n: 2, value: s2.coef ? pct(s2.coef) : "+0,0 %", caption: step2Caption,
       info: s2.state === "off" ? <>Индексы перерасчёта по месяцам за {by} год не загружены — шаг пропущен.</>
         : <>Росстат, цены производителей. {s2.idx?.source && <SrcLink s={s2.idx.source} />} {statusText(s2.idx) && `Индекс ${statusText(s2.idx)}.`} Вкладка «Перерасчёт цен по месяцам».</>,
