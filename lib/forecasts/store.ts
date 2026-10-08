@@ -24,6 +24,9 @@ export interface ForecastCard {
   newIndices: boolean;
   accuracy: number | null;
   actualRows: number;
+  /** Уникальные предметы закупки и категории текущей версии; категорий нет в данных — null */
+  subjects: number;
+  categories: number | null;
 }
 
 /** Плашки: только сам прогноз, агрегаты текущей версии и точность по факту — без строк */
@@ -35,7 +38,10 @@ export async function listForecasts(): Promise<ForecastCard[]> {
       (SELECT count(*) FROM actuals a WHERE a.forecast_id = f.id) AS actual_rows,
       (SELECT avg(abs(i.forecast_price - a.actual_price) / NULLIF(a.actual_price, 0))
          FROM actuals a JOIN forecast_items i ON i.version_id = f.current_version_id AND i.item_key = a.item_key
-        WHERE a.forecast_id = f.id) AS mape
+        WHERE a.forecast_id = f.id) AS mape,
+      (SELECT count(DISTINCT i.subject) FROM forecast_items i WHERE i.version_id = f.current_version_id) AS subjects,
+      (SELECT count(DISTINCT COALESCE(i.category, w.category)) FROM forecast_items i LEFT JOIN ws_codes w ON w.code = i.data->>'ws'
+        WHERE i.version_id = f.current_version_id) AS categories
     FROM forecasts f JOIN forecast_versions v ON v.id = f.current_version_id`);
   const ref = await loadReference();
   return rows.map((r) => {
@@ -46,6 +52,8 @@ export async function listForecasts(): Promise<ForecastCard[]> {
       newIndices: r.status !== "archived" && hasNewIndices(indexSnapshot(ref, r.year, r.base_year), r.index_snapshot ?? []),
       accuracy: m == null ? null : Math.max(0, Math.round((100 - m * 100) * 10) / 10),
       actualRows: Number(r.actual_rows),
+      subjects: Number(r.subjects),
+      categories: Number(r.categories) || null,
     };
   });
 }

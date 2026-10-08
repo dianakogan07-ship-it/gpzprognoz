@@ -6,31 +6,25 @@ import { api, useReference } from "@/components/useReference";
 import { Menu, type MenuItem } from "@/components/Menu";
 import { PromptModal } from "@/components/PromptModal";
 import { IconPlus } from "@/components/Icons";
-import { exportVersion, fmtDate } from "@/lib/forecasts/client";
+import { exportVersion } from "@/lib/forecasts/client";
 import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
 import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
 import type { ForecastCard } from "@/lib/forecasts/store";
-import { fmtGrowth, plural } from "@/lib/forecastView";
+import { plural } from "@/lib/forecastView";
 
 type Sort = "year" | "updated" | "status";
 const STATUS_ORDER: ForecastStatus[] = ["draft", "review", "approved", "archived"];
-const rub = (n: number) => `${Math.round(n).toLocaleString("ru-RU")} ₽`;
-
-function Progress({ value, label, tone }: { value: number; label: string; tone?: string }) {
-  const color = tone ?? (value >= 100 ? "bg-emerald-500" : value >= 50 ? "bg-orange-400" : "bg-red-500");
-  return (
-    <div>
-      <div className="flex justify-between text-xs text-slate-600"><span>{label}</span><span className="font-medium text-slate-900">{Math.round(value)} %</span></div>
-      <div className="mt-1 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} /></div>
-    </div>
-  );
-}
+const NBSP = "\u00a0";
+const numRu = (n: number, d = 0) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, NBSP);
+/** Сумма в млн ₽ с двумя знаками, меньше миллиона — в тыс. ₽ */
+const moneyOf = (n: number) => (Math.abs(n) >= 1e6 ? { value: numRu(n / 1e6, 2), unit: "млн" as const } : { value: numRu(n / 1e3, 0), unit: "тыс" as const });
+const moneyIn = (n: number, unit: "млн" | "тыс") => (unit === "млн" ? numRu(n / 1e6, 2) : numRu(n / 1e3, 0));
+const pctSigned = (g: number) => `${g < 0 ? "−" : "+"}${numRu(Math.abs(g), 1)}${NBSP}%`;
 
 function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a: string) => void }) {
   const router = useRouter();
-  const [showAccuracy, setShowAccuracy] = useState(false);
-  const s = c.stats;
-  const reviewedPct = s.needsReview ? (s.reviewed / s.needsReview) * 100 : 100;
+  const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
+  const money = moneyOf(s.forecastSum);
   const archived = c.status === "archived";
   const tail: MenuItem[] = [
     { label: "Изменить карточку", onClick: () => onAction(c, "edit") },
@@ -55,7 +49,6 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <p className="truncate font-semibold" title={c.title}>{c.title}</p>
-            <p className="mt-0.5 text-sm text-white/85">Прогноз на {c.year} · база {c.base_year} · v{c.version}</p>
           </div>
           <Menu light items={items} />
         </div>
@@ -66,34 +59,41 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
           <button className="self-start rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
             onClick={(e) => { e.stopPropagation(); onAction(c, "recalc"); }}>Новые индексы — пересчитать?</button>
         )}
-        <div>
-          <p className={`text-3xl font-semibold ${s.growth < 0 ? "text-red-700" : "text-slate-900"}`}>{fmtGrowth(s.growth)}</p>
-          <p className="mt-1 text-xs text-slate-500">База {rub(s.baseSum)} → Прогноз {rub(s.forecastSum)}</p>
-          <p className="mt-0.5 text-xs text-slate-500">{s.items} {plural(s.items, "позиция", "позиции", "позиций")} по {s.contracts} {plural(s.contracts, "договору", "договорам", "договорам")}</p>
+        <p className="font-semibold text-slate-900">Прогноз на {c.year} год</p>
+        <div className="grid grid-cols-2 gap-2">
+          <Tile value={pctSigned(s.growth)} label="рост цен" tone={s.growth < 0 ? "text-red-700" : undefined} />
+          <Tile value={`${money.value}${NBSP}${money.unit === "млн" ? "млн" : "тыс."}${NBSP}₽`} label="сумма цен позиций"
+            note={`(в ${c.base_year} — ${moneyIn(s.baseSum, money.unit)})`} />
+          <Tile value={s.subjects ? numRu(s.subjects) : numRu(s.items)} label={plural(s.subjects || s.items, "предмет закупки", "предмета закупки", "предметов закупки")}
+            href={`/forecasts/${c.id}?group=subject`} />
+          <Tile value={s.categories ? numRu(s.categories) : "—"} label={plural(s.categories ?? 0, "категория", "категории", "категорий")}
+            href={`/forecasts/${c.id}?group=category`} title={s.categories ? undefined : "В файлах нет категорий"} />
         </div>
-        <div>
-          {c.actualRows > 0 && (
-            <div className="mb-2 inline-flex rounded-lg bg-slate-100 p-0.5 text-xs" onClick={(e) => e.stopPropagation()}>
-              {[["Проверено", false], ["Точность", true]].map(([l, v]) => (
-                <button key={String(l)} className={`rounded-md px-2 py-0.5 ${showAccuracy === v ? "bg-white shadow-sm" : "text-slate-500"}`} onClick={() => setShowAccuracy(v as boolean)}>{l as string}</button>
-              ))}
-            </div>
+        <div className="mt-auto flex items-center gap-2">
+          <Link href={`/forecasts/${c.id}`} className="btn-sec !py-1.5" onClick={(e) => e.stopPropagation()}>Открыть прогноз</Link>
+          {s.needsReview > s.reviewed && (
+            <span title="Есть позиции для подтверждения" aria-label="Есть позиции для подтверждения"
+              className="flex h-6 w-6 cursor-help items-center justify-center rounded-full bg-amber-100 text-sm font-bold text-amber-700">!</span>
           )}
-          {showAccuracy && c.accuracy != null
-            ? <Progress value={c.accuracy} label="Точность прогноза" tone="bg-sky-500" />
-            : s.needsReview ? (
-              <div title="Позиции, где нет отраслевого индекса или индекс не утверждён, помечаются «согласовать человеком». Здесь видно, сколько из них уже проверено.">
-                <Progress value={reviewedPct} label={`Согласовано ${s.reviewed} из ${s.needsReview} ${plural(s.needsReview, "позиции", "позиций", "позиций")} с отметкой «проверить»`} />
-              </div>
-            )
-            : <p className="text-sm text-emerald-700">Все позиции посчитаны по утверждённым отраслевым индексам — проверка не требуется</p>}
         </div>
-        <button className="mt-auto self-start text-left text-xs text-slate-500 hover:text-brand hover:underline" onClick={(e) => { e.stopPropagation(); onAction(c, "history"); }}>
-          изменён {fmtDate(c.updated_at)} · {s.edits} {plural(s.edits, "ручная правка", "ручные правки", "ручных правок")}
-        </button>
       </div>
     </div>
   );
+}
+
+/** Плитка итогов: крупное число и подпись */
+function Tile({ value, label, note, tone, href, title }: { value: string; label: string; note?: string; tone?: string; href?: string; title?: string }) {
+  const body = (
+    <>
+      <p className={`whitespace-nowrap text-xl font-semibold ${tone ?? "text-slate-900"}`}>{value}</p>
+      <p className="text-xs leading-tight text-slate-500">{label}</p>
+      {note && <p className="mt-0.5 text-[11px] text-slate-400">{note}</p>}
+    </>
+  );
+  const cls = "min-w-0 rounded-lg bg-slate-50 px-3 py-2";
+  return href
+    ? <Link href={href} title={title} onClick={(e) => e.stopPropagation()} className={`${cls} transition hover:bg-brand-light hover:ring-1 hover:ring-brand/30`}>{body}</Link>
+    : <div className={cls} title={title}>{body}</div>;
 }
 
 export default function ForecastsPage() {
