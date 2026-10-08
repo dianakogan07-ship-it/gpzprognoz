@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "@/components/useReference";
 import { MultiSelect } from "@/components/MultiSelect";
@@ -41,7 +42,7 @@ export default function HistoryPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-4">
-      <Link href={`/forecasts/${id}`} className="text-sm text-brand hover:underline">← {title}</Link>
+      <Breadcrumbs items={[{ label: "Прогнозы", href: "/" }, { label: title, href: `/forecasts/${id}` }, { label: "История" }]} />
       <h1 className="text-xl font-semibold text-slate-900">История прогноза</h1>
       <div className="grid gap-4 lg:grid-cols-[22rem_1fr]">
         <div className="card space-y-3 self-start">

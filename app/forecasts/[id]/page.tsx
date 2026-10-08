@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { useRouter } from "next/navigation";
 import { Menu, type MenuItem } from "@/components/Menu";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -146,7 +147,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-4">
-      <Link href="/" className="text-sm text-brand hover:underline print:hidden">← Прогнозы</Link>
+      <Breadcrumbs items={[{ label: "Прогнозы", href: "/" }, { label: f.title }, { label: tab === "report" ? "Отчёт" : "Прогноз" }]} />
       <div className="card space-y-3 print:hidden">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>

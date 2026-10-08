@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { useCallback, useEffect, useState } from "react";
 import { api, useReference } from "@/components/useReference";
 import { FilePick } from "@/components/FilePick";
@@ -127,7 +128,7 @@ export default function ComparePage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-4">
-      <Link href={`/forecasts/${id}`} className="text-sm text-brand hover:underline">← {f.title}</Link>
+      <Breadcrumbs items={[{ label: "Прогнозы", href: "/" }, { label: f.title, href: `/forecasts/${id}` }, { label: "Сравнение" }]} />
       <h1 className="text-xl font-semibold text-slate-900">Сравнение</h1>
       <div className="inline-flex rounded-lg bg-white p-1 ring-1 ring-slate-200">
         {([["versions", "Версия ↔ версия"], ["years", "Год ↔ год"], ["fact", "Прогноз ↔ факт"]] as const).map(([k, l]) => (

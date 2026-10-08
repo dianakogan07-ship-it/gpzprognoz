@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, useReference } from "@/components/useReference";
@@ -37,7 +38,7 @@ export default function NewForecastPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
-      <Link href="/" className="text-sm text-brand hover:underline">← Прогнозы</Link>
+      <Breadcrumbs items={[{ label: "Прогнозы", href: "/" }, { label: "Новый прогноз" }]} />
       <div className="card space-y-5">
         <h1 className="text-xl font-semibold text-slate-900">Новый прогноз</h1>
         {db === false && <p className="text-sm text-amber-700">Чтобы сохранять прогнозы, подключите базу данных.</p>}
