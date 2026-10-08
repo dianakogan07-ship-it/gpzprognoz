@@ -14,7 +14,7 @@ export function Header() {
     router.replace("/login");
   }
   return (
-    <header className="border-b border-slate-200 bg-white">
+    <header className="border-b border-slate-200 bg-white print:hidden">
       <nav className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-3">
         <Link href="/" className="mr-4 shrink-0" title="На главную">
           {/* eslint-disable-next-line @next/next/no-img-element */}

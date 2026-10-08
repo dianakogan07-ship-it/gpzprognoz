@@ -45,7 +45,7 @@ export const isActiveIndex = (i: PriceIndex) => !i.pending_of && !i.superseded_a
 
 export interface Reference {
   sources: Source[];
-  categories: Named[];
+  categories: (Named & { short_name?: string | null })[];
   purchaseTypes: Named[];
   purchaseForms: Named[];
   purchaseMethods: Named[];

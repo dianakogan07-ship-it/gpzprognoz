@@ -137,6 +137,15 @@ CREATE TABLE IF NOT EXISTS actuals (
 CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key);
 -- Цвет карточки, выбранный пользователем (пусто — по статусу)
 ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS color TEXT;
+-- Короткие названия категорий для графиков отчёта
+ALTER TABLE categories ADD COLUMN IF NOT EXISTS short_name TEXT;
+UPDATE categories SET short_name = 'ИТ-лицензии' WHERE name = 'ИТ-Лицензии' AND short_name IS NULL;
+UPDATE categories SET short_name = 'Строительство' WHERE name = 'Капитальное строительство и ПИР' AND short_name IS NULL;
+UPDATE categories SET short_name = 'МТР' WHERE name = 'МТР' AND short_name IS NULL;
+UPDATE categories SET short_name = 'Произв. услуги' WHERE name = 'Производственные работы/услуги' AND short_name IS NULL;
+UPDATE categories SET short_name = 'Сырьё' WHERE name = 'Сырьё (нефть, нефтепродукты, нефтехимия, газ)' AND short_name IS NULL;
+UPDATE categories SET short_name = 'Товары АХН' WHERE name = 'Товары административно-хозяйственного назначения' AND short_name IS NULL;
+UPDATE categories SET short_name = 'Общие услуги' WHERE name = 'Услуги/работы общего профиля' AND short_name IS NULL;
 -- Статус «Отклонён»
 ALTER TABLE forecasts DROP CONSTRAINT IF EXISTS forecasts_status_check;
 ALTER TABLE forecasts ADD CONSTRAINT forecasts_status_check CHECK (status IN ('draft', 'review', 'approved', 'rejected', 'archived'));

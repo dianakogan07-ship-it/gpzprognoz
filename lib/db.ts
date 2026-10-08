@@ -30,7 +30,7 @@ function localPg(): Db {
 /** Описание редактируемых справочников: таблица, ключ, колонки */
 export const TABLES = {
   sources: { pk: "id", cols: ["code", "name", "url", "kind", "verified", "note"], order: "id" },
-  categories: { pk: "id", cols: ["name"], order: "name" },
+  categories: { pk: "id", cols: ["name", "short_name"], order: "name" },
   purchase_types: { pk: "id", cols: ["name"], order: "id" },
   purchase_forms: { pk: "id", cols: ["name"], order: "id" },
   purchase_methods: { pk: "id", cols: ["name"], order: "id" },

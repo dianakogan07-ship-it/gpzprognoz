@@ -33,3 +33,10 @@ select.inp {
 .tbl tbody tr:hover { @apply bg-slate-50/70; }
 .tag { @apply mr-1 inline-block rounded-md bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200; }
 }
+
+/* Печать отчёта: A4 альбомная, без навигации */
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+  body { background: #fff !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  main { padding: 0 !important; max-width: none !important; }
+}

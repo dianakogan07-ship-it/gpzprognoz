@@ -5,6 +5,7 @@ import { Menu, type MenuItem } from "@/components/Menu";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, useReference } from "@/components/useReference";
 import { ForecastTable, useForecastFilters } from "@/components/ForecastTable";
+import { ForecastReport } from "@/components/ForecastReport";
 import { Modal } from "@/components/Modal";
 import { PromptModal } from "@/components/PromptModal";
 import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecasts/client";
@@ -74,6 +75,16 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
   const [newVer, setNewVer] = useState(false);
   const [showIdx, setShowIdx] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [tab, setTabState] = useState<"forecast" | "report">("forecast");
+  useEffect(() => { if (new URLSearchParams(window.location.search).get("tab") === "report") setTabState("report"); }, []);
+  // Вкладка — в адресе, фильтры при переключении сохраняются
+  const setTab = (t: "forecast" | "report") => {
+    setTabState(t);
+    const p = new URLSearchParams(window.location.search);
+    if (t === "report") p.set("tab", "report"); else p.delete("tab");
+    window.history.replaceState(null, "", p.toString() ? `?${p}` : window.location.pathname);
+    window.scrollTo({ top: 0 });
+  };
   const [showExcluded, setShowExcluded] = useState(false);
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -135,8 +146,8 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-4">
-      <Link href="/" className="text-sm text-brand hover:underline">← Прогнозы</Link>
-      <div className="card space-y-3">
+      <Link href="/" className="text-sm text-brand hover:underline print:hidden">← Прогнозы</Link>
+      <div className="card space-y-3 print:hidden">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -166,6 +177,14 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
+        <div className="-mb-1 flex gap-1 border-b border-slate-200">
+          {([["forecast", "Прогноз"], ["report", "Отчёт"]] as const).map(([k, l]) => (
+            <button key={k} type="button" onClick={() => setTab(k)}
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${tab === k ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>{l}</button>
+          ))}
+        </div>
+
+        {tab === "forecast" && <>
         <p className="text-sm text-slate-700">
           закупок {s.contracts} · позиций {s.items} · средний рост {fmtGrowth(s.growth)}
         </p>
@@ -182,10 +201,17 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
             <button className="btn-sec" disabled={busy} onClick={() => act(async () => { const v = await api(`/api/forecasts/${id}/recalc`, "POST"); await load(v.versionId); }, "Прогноз пересчитан — создана новая версия")}>Пересчитать</button>
           </div>
         )}
+        </>}
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
       </div>
 
-      <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
+      {tab === "report" && reference && (
+        <ForecastReport view={view} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
+          approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null}
+          onShowAll={() => setTab("forecast")}
+          onExcel={(rows) => exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")} />
+      )}
+      {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
         onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")}
         onEdit={editable ? setEditing : undefined}
         onReview={editable ? setReviewed : undefined}
@@ -193,7 +219,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
             <Link href={`/forecasts/${id}/history?okpd=${encodeURIComponent(v.row.okpd2)}`} className="text-brand hover:underline">История изменений позиции</Link>
           </div>
-        )} />
+        )} />}
 
       {editing && (
         <EditModal v={editing} frozen={frozen} onClose={() => setEditing(null)} onSave={async (field, value, reason) => {
