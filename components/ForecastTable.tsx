@@ -245,7 +245,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   <th className="w-6" />
                   <SortTh k="subject" f={f} set={set}>Позиция / регион</SortTh>
                   <th>Ед.</th>
-                  <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
+                  <SortTh k="price" f={f} set={set} right>Цена {baseYear}</SortTh>
                   <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear} без НДС</SortTh>
                   <th className="whitespace-nowrap text-right">Прогноз {targetYear} с НДС</th>
                   <th>Статус</th>
@@ -392,22 +392,6 @@ function StatusPick({ v, onChange }: { v: ViewRow; onChange?: (v: ViewRow, appro
         </ul>
       )}
     </div>
-  );
-}
-
-/** Подсказка у колонки цены базового года */
-function PriceInfo() {
-  return (
-    <span className="group/info relative ml-1 inline-flex align-middle normal-case tracking-normal" onClick={(e) => e.stopPropagation()}>
-      <Link href="/indices?tab=to_december" aria-label="Цены из договоров разных месяцев" className="text-amber-500 hover:text-amber-600">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />
-        </svg>
-      </Link>
-      <span role="tooltip" className="pointer-events-none invisible absolute right-0 top-full z-30 mt-2 w-48 whitespace-normal border sm:right-auto sm:left-1/2 sm:w-max sm:-translate-x-1/2 sm:whitespace-nowrap border-slate-800 bg-white px-2 py-1 text-xs font-normal text-slate-800 opacity-0 transition-opacity group-hover/info:visible group-hover/info:opacity-100">
-        Цены из договоров разных месяцев — уточните индексы. Нажмите, чтобы открыть индексы
-      </span>
-    </span>
   );
 }
 
