@@ -11,6 +11,10 @@ import type { ForecastRow } from "@/lib/forecast";
 
 const MONTHS_GEN = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"];
 const SOURCE_CODES = ["MER_FORECAST", "ROSSTAT_ICP", "CBR"];
+/** Ширина страницы отчёта при выгрузке в PDF, px: под лист A4 альбомной ориентации */
+const PDF_WIDTH = 1280;
+/** До скольких предметов закупки карточки «Рост по категории» и «Рост по предмету» помещаются рядом на одном листе PDF */
+const PDF_SIDE_MAX = 12;
 
 /**
  * Отчёт для закупщиков: только итог и его обоснование, без технических пометок.
@@ -50,6 +54,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
   const sources = reference.sources.filter((s) => SOURCE_CODES.includes(s.code));
   const rootRef = useRef<HTMLDivElement>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  const pdfSide = subjects.length <= PDF_SIDE_MAX;
   async function downloadExcel() {
     const XLSX = await import("xlsx");
     const wb = XLSX.utils.book_new();
@@ -104,7 +109,8 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
   }
 
   return (
-    <div ref={rootRef} className="report space-y-4" style={{ color: RC.ink }}>
+    // На время выгрузки — фиксированная ширина, чтобы PDF выглядел одинаково на любом экране
+    <div ref={rootRef} className="report space-y-4" style={{ color: RC.ink, ...(pdfBusy ? { width: PDF_WIDTH, maxWidth: "none" } : {}) }}>
       {/* Заголовок для PDF */}
       <div data-pdf className={pdfBusy ? "block" : "hidden"}>
         <h1 className="text-2xl font-semibold">Прогноз цен {year}</h1>
@@ -138,17 +144,19 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
 
         <div data-pdf><Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} /></div>
 
-        <div data-pdf data-pdf-page className="flex flex-wrap gap-4">
+        {/* В PDF список предметов выводится полностью. Короткий — карточки рядом на одном листе;
+            длинный — карточки друг под другом, предметы в две колонки */}
+        <div data-pdf={pdfSide ? "" : undefined} data-pdf-page={pdfSide ? "" : undefined} className={!pdfBusy ? "flex flex-wrap gap-4" : pdfSide ? "grid grid-cols-2 gap-4" : "space-y-4"}>
           {cats.length > 0 && (
-            <Card title="Рост по категории" className="min-w-0 flex-[1_1_560px]">
+            <Card pdf={pdfBusy && !pdfSide ? "page" : undefined} title="Рост по категории" className="min-w-0 flex-[1_1_560px]">
               <Legend year={year} baseYear={baseYear} cpi={cpi} />
               <Radial groups={cats.map((c) => ({ ...c, label: shortCat(c.key) }))} cpi={cpi} />
             </Card>
           )}
           {subjects.length > 0 && (
-            <Card title="Рост по предмету закупки" className="min-w-0 flex-[1_1_560px]">
+            <Card pdf={pdfBusy && !pdfSide ? (cats.length ? "block" : "page") : undefined} title="Рост по предмету закупки" className="min-w-0 flex-[1_1_560px]">
               <Legend year={year} baseYear={baseYear} cpi={cpi} />
-              <Bars groups={subjects} cpi={cpi} />
+              <Bars groups={subjects} cpi={cpi} print={pdfBusy} columns={pdfBusy && !pdfSide ? 2 : 1} />
             </Card>
           )}
         </div>
@@ -176,9 +184,9 @@ function Kpi({ label, value, note }: { label: string; value: number; note: strin
   );
 }
 
-function Card({ title, sub, action, className, children }: { title: string; sub?: string; action?: ReactNode; className?: string; children: ReactNode }) {
+function Card({ title, sub, action, className, children, pdf }: { title: string; sub?: string; action?: ReactNode; className?: string; children: ReactNode; pdf?: "block" | "page" }) {
   return (
-    <section className={`min-w-0 break-inside-avoid rounded-2xl border border-slate-200 bg-white p-5 ${className ?? ""}`}>
+    <section data-pdf={pdf ? "" : undefined} data-pdf-page={pdf === "page" ? "" : undefined} className={`min-w-0 break-inside-avoid rounded-2xl border border-slate-200 bg-white p-5 ${className ?? ""}`}>
       <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">{title}</h2>{action}</div>
       {sub && <p className="mt-0.5 text-sm" style={{ color: RC.muted }}>{sub}</p>}
       <div className="mt-3">{children}</div>
@@ -308,16 +316,27 @@ function Radial({ groups, cpi }: { groups: Group[]; cpi: number | null }) {
 }
 
 /** Полосы по предметам закупки: две части роста и пунктир инфляции */
-function Bars({ groups: all, cpi }: { groups: Group[]; cpi: number | null }) {
+function Bars({ groups: all, cpi, print, columns = 1 }: { groups: Group[]; cpi: number | null; print?: boolean; columns?: number }) {
   const [open, setOpen] = useState(false);
-  const groups = open ? all : all.slice(0, 8);
+  // В PDF — все предметы; длинный список можно разложить в колонки (по столбцам), чтобы карточка помещалась на лист
+  const groups = open || print ? all : all.slice(0, 8);
+  const cols = all.length > 8 ? columns : 1;
+  const perCol = Math.ceil(groups.length / cols);
   const max = evenCeil(Math.max(...all.map((g) => g.total), cpi ?? 0));
   const pct = (v: number) => `${(Math.max(0, v) / max) * 100}%`;
+  const axis = (
+    <div className="mt-1 grid grid-cols-[8rem_minmax(0,1fr)_4rem] gap-3 text-[11px] sm:grid-cols-[12rem_minmax(0,1fr)_4.5rem]" style={{ color: RC.muted }}>
+      <span />
+      <span className="flex justify-between"><span>0&nbsp;%</span><span>{fmtNum(max / 2, 0)}&nbsp;%</span><span>{fmtNum(max, 0)}&nbsp;%</span></span>
+      <span />
+    </div>
+  );
   return (
     <div>
-      <ul className="space-y-2.5">
+      <ul className={cols > 1 ? "grid grid-flow-col gap-x-10 gap-y-2.5" : "space-y-2.5"}
+        style={cols > 1 ? { gridTemplateRows: `repeat(${perCol}, auto)`, gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } : undefined}>
         {groups.map((g) => (
-          <li key={g.key} className="grid grid-cols-[8rem_minmax(0,1fr)_4rem] items-center gap-3 sm:grid-cols-[12rem_minmax(0,1fr)_4.5rem]">
+          <li key={g.key} data-pdf-row className="grid grid-cols-[8rem_minmax(0,1fr)_4rem] items-center gap-3 sm:grid-cols-[12rem_minmax(0,1fr)_4.5rem]">
             <span className="hyphens-auto break-words text-sm leading-tight" lang="ru">{g.key}</span>
             <span className="relative h-4 overflow-hidden rounded" style={{ background: RC.bg }}>
               <span className="absolute inset-y-0 left-0" style={{ width: pct(Math.min(g.intra, g.total)), background: RC.sky }} />
@@ -328,12 +347,8 @@ function Bars({ groups: all, cpi }: { groups: Group[]; cpi: number | null }) {
           </li>
         ))}
       </ul>
-      <div className="mt-1 grid grid-cols-[8rem_minmax(0,1fr)_4rem] gap-3 text-[11px] sm:grid-cols-[12rem_minmax(0,1fr)_4.5rem]" style={{ color: RC.muted }}>
-        <span />
-        <span className="flex justify-between"><span>0&nbsp;%</span><span>{fmtNum(max / 2, 0)}&nbsp;%</span><span>{fmtNum(max, 0)}&nbsp;%</span></span>
-        <span />
-      </div>
-      {all.length > 8 && (
+      {cols > 1 ? <div className="grid grid-cols-2 gap-x-10">{axis}{axis}</div> : axis}
+      {all.length > 8 && !print && (
         <button type="button" data-pdf-skip className="mt-3 text-sm font-medium print:hidden" style={{ color: RC.blue }} onClick={() => setOpen(!open)}>
           {open ? "Свернуть ▴" : `Показать все ${all.length} ▾`}
         </button>
