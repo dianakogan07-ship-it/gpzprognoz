@@ -23,8 +23,8 @@ function LoginForm() {
     <form onSubmit={submit} className="card w-full max-w-md space-y-5">
       <div>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="Ориентир ГПЗ — прогноз цен закупок" width={1000} height={142} className="mx-auto h-auto w-full max-w-xs" />
-        <h1 className="sr-only">Ориентир ГПЗ</h1>
+        <img src="/logo.png" alt="Ориентир — прогноз цен закупок" width={1000} height={161} className="mx-auto h-auto w-full max-w-xs" />
+        <h1 className="sr-only">Ориентир</h1>
         <p className="hint mt-4 text-center">Войдите, чтобы продолжить</p>
       </div>
       <div>

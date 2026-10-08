@@ -18,7 +18,7 @@ export function Header() {
       <nav className="mx-auto flex max-w-7xl flex-wrap items-center gap-1 px-4 py-3">
         <Link href="/" className="mr-4 shrink-0" title="На главную">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="Ориентир ГПЗ" width={1000} height={142} className="h-6 w-auto sm:h-7" />
+          <img src="/logo.png" alt="Ориентир" width={1000} height={161} className="h-6 w-auto sm:h-7" />
         </Link>
         {NAV.map(([href, label]) => (
           <Link key={href} href={href}

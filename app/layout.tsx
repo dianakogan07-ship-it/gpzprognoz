@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { Header } from "@/components/Header";
 import { UpdateWatcher } from "@/components/UpdateWatcher";
 
-export const metadata = { title: "Ориентир ГПЗ", description: "Обезличенный справочник прогнозных цен по предметам закупки" };
+export const metadata = { title: "Ориентир", description: "Обезличенный справочник прогнозных цен по предметам закупки" };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
