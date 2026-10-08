@@ -246,8 +246,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   <SortTh k="subject" f={f} set={set}>Позиция / регион</SortTh>
                   <th>Ед.</th>
                   <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
-                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
-                  <th className="whitespace-nowrap text-right">С НДС</th>
+                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear} без НДС</SortTh>
+                  <th className="whitespace-nowrap text-right">Прогноз {targetYear} с НДС</th>
                   <th>Статус</th>
                   <th />
                 </tr>
@@ -398,11 +398,14 @@ function StatusPick({ v, onChange }: { v: ViewRow; onChange?: (v: ViewRow, appro
 /** Подсказка у колонки цены базового года */
 function PriceInfo() {
   return (
-    <span className="group/info relative ml-1 inline-flex align-middle normal-case" onClick={(e) => e.stopPropagation()}>
-      <button type="button" aria-label="Пояснение к цене" className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-semibold leading-none text-slate-500 hover:border-brand hover:text-brand">i</button>
-      <span className="invisible absolute right-0 top-full z-20 mt-1 w-60 rounded-lg border border-slate-200 bg-white p-3 text-left text-xs font-normal tracking-normal text-slate-700 opacity-0 shadow-lg transition group-hover/info:visible group-hover/info:opacity-100 group-focus-within/info:visible group-focus-within/info:opacity-100">
-        Цены из договоров разных месяцев. Для точности уточните индексы.{" "}
-        <Link href="/indices" className="text-brand hover:underline">Индексы</Link>
+    <span className="group/info relative ml-1 inline-flex align-middle normal-case tracking-normal" onClick={(e) => e.stopPropagation()}>
+      <Link href="/indices?tab=to_december" aria-label="Цены из договоров разных месяцев" className="text-amber-500 hover:text-amber-600">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01" />
+        </svg>
+      </Link>
+      <span role="tooltip" className="pointer-events-none invisible absolute right-0 top-full z-30 mt-2 w-48 whitespace-normal border sm:right-auto sm:left-1/2 sm:w-max sm:-translate-x-1/2 sm:whitespace-nowrap border-slate-800 bg-white px-2 py-1 text-xs font-normal text-slate-800 opacity-0 transition-opacity group-hover/info:visible group-hover/info:opacity-100">
+        Цены из договоров разных месяцев — уточните индексы. Нажмите, чтобы открыть индексы
       </span>
     </span>
   );

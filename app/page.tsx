@@ -45,10 +45,6 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
         </div>
         <div className="mt-2 flex items-center gap-2">
           <span className="inline-block rounded bg-white/20 px-2 py-0.5 text-xs font-medium">{STATUS_TITLE[c.status]}</span>
-          {s.needsReview > s.reviewed && (
-            <span title="Есть позиции для подтверждения" aria-label="Есть позиции для подтверждения"
-              className="flex h-5 w-5 cursor-help items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">!</span>
-          )}
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-4 px-5 py-4">
