@@ -43,19 +43,19 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
           </div>
           <Menu light items={items} />
         </div>
-        <span className="mt-2 inline-block rounded bg-white/20 px-2 py-0.5 text-xs font-medium">{STATUS_TITLE[c.status]}</span>
+        <div className="mt-2 flex items-center gap-2">
+          <span className="inline-block rounded bg-white/20 px-2 py-0.5 text-xs font-medium">{STATUS_TITLE[c.status]}</span>
+          {s.needsReview > s.reviewed && (
+            <span title="Есть позиции для подтверждения" aria-label="Есть позиции для подтверждения"
+              className="flex h-5 w-5 cursor-help items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">!</span>
+          )}
+        </div>
       </div>
       <div className="flex flex-1 flex-col gap-4 px-5 py-4">
         {c.newIndices && (
           <button className="self-start rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
             onClick={(e) => { e.stopPropagation(); onAction(c, "recalc"); }}>Новые индексы — пересчитать?</button>
         )}
-        <p className="flex items-center gap-2 font-semibold text-slate-900">Прогноз на {c.year} год
-          {s.needsReview > s.reviewed && (
-            <span title="Есть позиции для подтверждения" aria-label="Есть позиции для подтверждения"
-              className="flex h-5 w-5 cursor-help items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">!</span>
-          )}
-        </p>
         <div className="grid grid-cols-2 gap-2">
           <Tile value={pctSigned(s.growth)} label="рост цен" tone={s.growth < 0 ? "text-red-700" : undefined} />
           <Tile value={`${money.value}${NBSP}${money.unit === "млн" ? "млн" : "тыс."}${NBSP}₽`} label="сумма цен позиций"
