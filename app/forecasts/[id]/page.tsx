@@ -8,7 +8,7 @@ import { ForecastTable, useForecastFilters } from "@/components/ForecastTable";
 import { Modal } from "@/components/Modal";
 import { PromptModal } from "@/components/PromptModal";
 import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecasts/client";
-import { STATUS_TITLE, isFrozen, type ForecastStatus, type SnapshotIndex, type VersionStats } from "@/lib/forecasts/model";
+import { PICK_STATUSES, STATUS_TITLE, isFrozen, type ForecastStatus, type SnapshotIndex, type VersionStats } from "@/lib/forecasts/model";
 import { toViewRows, fmtGrowth, fmtRub, plural, type ViewRow } from "@/lib/forecastView";
 import { formatGrowth, industryLabel, MONTHS } from "@/lib/indexFormat";
 import type { ExcludedRow, ForecastRow } from "@/lib/forecast";
@@ -18,7 +18,7 @@ interface Version { id: number; number: number; status: ForecastStatus; comment:
 interface Forecast { id: number; title: string; year: number; base_year: number; status: ForecastStatus; current_version_id: number; updated_at: string; versions: Version[]; snapshot: SnapshotIndex[]; excluded: ExcludedRow[]; newIndices: boolean }
 
 const PILL: Record<ForecastStatus, string> = {
-  draft: "bg-violet-100 text-violet-800", review: "bg-teal-100 text-teal-800", approved: "bg-emerald-100 text-emerald-800", archived: "bg-slate-200 text-slate-700",
+  draft: "bg-violet-100 text-violet-800", review: "bg-teal-100 text-teal-800", approved: "bg-emerald-100 text-emerald-800", rejected: "bg-rose-100 text-rose-800", archived: "bg-slate-200 text-slate-700",
 };
 const KIND_TITLE = { forecast: "Рост по отрасли", cpi: "Общая инфляция", to_december: "Пересчёт до декабря" } as const;
 
@@ -59,7 +59,7 @@ function EditModal({ v, frozen, onClose, onSave }: { v: ViewRow; frozen: boolean
 }
 
 const fmtShort = (s: string) => new Date(s).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }).replace(/\./g, "").replace(/\s*г$/, "");
-const STATUS_WHEN: Record<ForecastStatus, string> = { draft: "черновик от", review: "на проверке с", approved: "утверждена", archived: "в архиве с" };
+const STATUS_WHEN: Record<ForecastStatus, string> = { draft: "в работе с", review: "на проверке с", approved: "утверждена", rejected: "отклонена", archived: "в архиве с" };
 
 export default function ForecastPage({ params }: { params: { id: string } }) {
   const id = Number(params.id);
@@ -149,11 +149,19 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {isCurrent && f.status === "draft" && <button className="btn" disabled={busy} onClick={() => status("review", "Прогноз отправлен на проверку")}>На проверку</button>}
-            {isCurrent && f.status === "review" && <>
-              <button className="btn-sec" disabled={busy} onClick={() => status("draft", "Прогноз возвращён в черновик")}>Вернуть в черновик</button>
-              <button className="btn" disabled={busy} onClick={() => confirm("Утвердить прогноз? Изменения после этого будут сохраняться новыми версиями.") && status("approved", "Прогноз утверждён")}>Утвердить</button>
-            </>}
+            {isCurrent && !archived && (
+              <label className="flex items-center gap-2 text-sm text-slate-600">Статус
+                <select className="inp w-auto py-1.5" value={PICK_STATUSES.includes(f.status) ? f.status : ""} disabled={busy}
+                  onChange={(e) => {
+                    const to = e.target.value as ForecastStatus;
+                    if (to === "approved" && !confirm("Утвердить прогноз? Изменения после этого будут сохраняться новыми версиями.")) return;
+                    status(to, to === "approved" ? "Прогноз утверждён" : to === "rejected" ? "Прогноз отклонён" : "Прогноз в работе");
+                  }}>
+                  {!PICK_STATUSES.includes(f.status) && <option value="" disabled>{STATUS_TITLE[f.status]}</option>}
+                  {PICK_STATUSES.map((st) => <option key={st} value={st}>{STATUS_TITLE[st]}</option>)}
+                </select>
+              </label>
+            )}
             <Menu items={menu}>⋯</Menu>
           </div>
         </div>

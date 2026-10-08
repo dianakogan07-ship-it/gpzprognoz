@@ -283,6 +283,12 @@ export async function setStatus(forecastId: number, to: ForecastStatus, author: 
   const f = await forecastOf(forecastId);
   if (!canTransition(f.status, to)) throw new Error("Такой переход статуса невозможен");
   const db = sql();
+  // Утверждённая или отклонённая версия не меняется: возврат в работу — новая версия-копия
+  if ((f.status === "approved" || f.status === "rejected") && to === "draft") {
+    const v = await newVersion(forecastId, reason ?? "Возвращён в работу", author);
+    await log({ forecastId, versionId: v.versionId, type: "status", field: "status", oldValue: f.status, newValue: to, reason: reason ?? null, author });
+    return;
+  }
   await db.query("UPDATE forecasts SET status = $1, updated_at = now() WHERE id = $2", [to, forecastId]);
   await db.query("UPDATE forecast_versions SET status = $1 WHERE id = $2", [to, f.current_version_id]);
   await log({ forecastId, versionId: f.current_version_id, type: "status", field: "status", oldValue: f.status, newValue: to, reason: reason ?? null, author });

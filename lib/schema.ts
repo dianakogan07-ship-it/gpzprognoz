@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS forecasts (
   title TEXT NOT NULL,
   year INT NOT NULL,
   base_year INT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'archived')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'rejected', 'archived')),
   current_version_id INT,
   author TEXT NOT NULL DEFAULT 'owner',
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS forecast_versions (
   id SERIAL PRIMARY KEY,
   forecast_id INT NOT NULL REFERENCES forecasts(id) ON DELETE CASCADE,
   number INT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'archived')),
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'review', 'approved', 'rejected', 'archived')),
   comment TEXT,
   index_snapshot JSONB NOT NULL DEFAULT '[]',
   index_fingerprint TEXT,
@@ -137,6 +137,11 @@ CREATE TABLE IF NOT EXISTS actuals (
 CREATE INDEX IF NOT EXISTS actuals_forecast ON actuals (forecast_id, item_key);
 -- Цвет карточки, выбранный пользователем (пусто — по статусу)
 ALTER TABLE forecasts ADD COLUMN IF NOT EXISTS color TEXT;
+-- Статус «Отклонён»
+ALTER TABLE forecasts DROP CONSTRAINT IF EXISTS forecasts_status_check;
+ALTER TABLE forecasts ADD CONSTRAINT forecasts_status_check CHECK (status IN ('draft', 'review', 'approved', 'rejected', 'archived'));
+ALTER TABLE forecast_versions DROP CONSTRAINT IF EXISTS forecast_versions_status_check;
+ALTER TABLE forecast_versions ADD CONSTRAINT forecast_versions_status_check CHECK (status IN ('draft', 'review', 'approved', 'rejected', 'archived'));
 -- Строки файлов, не вошедшие в расчёт версии
 ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS excluded_rows JSONB NOT NULL DEFAULT '[]'
 `;

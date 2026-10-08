@@ -19,6 +19,7 @@ const COLOR_TITLE: Record<CardColor, string> = {
 export const HEAD: Record<ForecastStatus, string> = {
   draft: "bg-violet-500",
   review: "bg-teal-500",
+  rejected: "bg-rose-500",
   approved: "bg-emerald-600",
   archived: "bg-slate-400",
 };
@@ -74,7 +75,7 @@ export function EditCard({ c, reference, focusFiles, onClose, onSaved }: {
           {swatch(null, `${HEAD[c.status]} bg-[linear-gradient(135deg,transparent_45%,white_45%,white_55%,transparent_55%)]`, "По статусу")}
           {CARD_COLORS.map((k) => swatch(k, COLOR_CLASS[k], COLOR_TITLE[k]))}
         </div>
-        <p className="hint mt-2">{color ? "Цвет выбран вручную." : "Цвет меняется вместе со статусом: черновик — сиреневый, на проверке — бирюзовый, утверждён — зелёный."}</p>
+        <p className="hint mt-2">{color ? "Цвет выбран вручную." : "Цвет меняется вместе со статусом: в работе — сиреневый, на проверке — бирюзовый, утверждён — зелёный, отклонён — розовый."}</p>
       </div>
       <div className={`overflow-hidden rounded-lg ${color ? COLOR_CLASS[color as CardColor] : HEAD[c.status]} px-4 py-3 text-white`}>
         <p className="font-semibold">{title || "Без названия"}</p>

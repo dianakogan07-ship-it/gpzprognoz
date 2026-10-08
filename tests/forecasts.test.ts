@@ -4,13 +4,15 @@ import { aggregateForecast, groupKey, type ContractPoint } from "@/lib/forecast"
 import { SEED } from "@/lib/seed";
 
 describe("статусы прогноза", () => {
-  it("draft → review → approved → archived; назад только с проверки в черновик", () => {
+  it("В работе / Утверждён / Отклонён меняются свободно, из архива — никуда", () => {
     expect(canTransition("draft", "review")).toBe(true);
     expect(canTransition("review", "approved")).toBe(true);
     expect(canTransition("approved", "archived")).toBe(true);
     expect(canTransition("review", "draft")).toBe(true);
-    expect(canTransition("draft", "approved")).toBe(false);
-    expect(canTransition("approved", "draft")).toBe(false);
+    expect(canTransition("draft", "approved")).toBe(true);
+    expect(canTransition("approved", "rejected")).toBe(true);
+    expect(canTransition("rejected", "draft")).toBe(true);
+    expect(isFrozen("rejected")).toBe(false);
     expect(canTransition("archived", "draft")).toBe(false);
     expect(isFrozen("approved")).toBe(true);
     expect(isFrozen("review")).toBe(false);

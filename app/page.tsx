@@ -7,13 +7,13 @@ import { Menu, type MenuItem } from "@/components/Menu";
 import { PromptModal } from "@/components/PromptModal";
 import { IconPlus } from "@/components/Icons";
 import { exportVersion } from "@/lib/forecasts/client";
-import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
+import { PICK_STATUSES, STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
 import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { plural } from "@/lib/forecastView";
 
 type Sort = "year" | "updated" | "status";
-const STATUS_ORDER: ForecastStatus[] = ["draft", "review", "approved", "archived"];
+const STATUS_ORDER: ForecastStatus[] = ["draft", "review", "approved", "rejected", "archived"];
 const NBSP = "\u00a0";
 const numRu = (n: number, d = 0) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, NBSP);
 /** Сумма в млн ₽ с двумя знаками, меньше миллиона — в тыс. ₽ */
@@ -39,6 +39,7 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
       { label: "Сравнить", onClick: () => onAction(c, "compare") },
       { label: "История", onClick: () => onAction(c, "history") },
       { label: "Выгрузить в Excel", onClick: () => onAction(c, "export") },
+      ...PICK_STATUSES.filter((st) => st !== c.status).map((st) => ({ label: `Статус: ${STATUS_TITLE[st].toLowerCase()}`, onClick: () => onAction(c, `status:${st}`) })),
       { label: "В архив", onClick: () => onAction(c, "archive") },
       ...tail,
     ];
@@ -136,6 +137,13 @@ export default function ForecastsPage() {
         await api(`/api/forecasts/${c.id}`, "DELETE"); setMsg(`Прогноз «${c.title}» удалён`); await load();
       }
       if (a === "export" && reference) await exportVersion(c, c.version_id, c.version, reference.sources);
+      if (a.startsWith("status:")) {
+        const to = a.slice(7) as ForecastStatus;
+        if (to !== "approved" || confirm(`Утвердить «${c.title}»? Изменения после этого будут сохраняться новыми версиями.`)) {
+          await api(`/api/forecasts/${c.id}/status`, "POST", { to }); await load();
+          setMsg(`«${c.title}»: статус «${STATUS_TITLE[to]}»`);
+        }
+      }
       if (a === "archive" && confirm(`Перенести «${c.title}» в архив? Изменить его будет нельзя.`)) {
         await api(`/api/forecasts/${c.id}/status`, "POST", { to: "archived" }); await load();
       }

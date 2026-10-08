@@ -1,8 +1,10 @@
 import type { ForecastRow } from "../forecast";
 import type { PriceIndex, Reference } from "../types";
 
-export type ForecastStatus = "draft" | "review" | "approved" | "archived";
-export const STATUS_TITLE: Record<ForecastStatus, string> = { draft: "Черновик", review: "На проверке", approved: "Утверждён", archived: "В архиве" };
+export type ForecastStatus = "draft" | "review" | "approved" | "rejected" | "archived";
+export const STATUS_TITLE: Record<ForecastStatus, string> = { draft: "В работе", review: "На проверке", approved: "Утверждён", rejected: "Отклонён", archived: "В архиве" };
+/** Статусы, которые можно выбрать вручную */
+export const PICK_STATUSES: ForecastStatus[] = ["draft", "approved", "rejected"];
 
 /** Цвета шапки карточки на выбор */
 export const CARD_COLORS = ["violet", "teal", "emerald", "blue", "sky", "amber", "rose", "slate"] as const;
@@ -10,9 +12,10 @@ export type CardColor = (typeof CARD_COLORS)[number];
 
 /** Разрешённые переходы статусов */
 export const TRANSITIONS: Record<ForecastStatus, ForecastStatus[]> = {
-  draft: ["review", "archived"],
-  review: ["approved", "draft", "archived"],
-  approved: ["archived"],
+  draft: ["review", "approved", "rejected", "archived"],
+  review: ["approved", "rejected", "draft", "archived"],
+  approved: ["draft", "rejected", "archived"],
+  rejected: ["draft", "approved", "archived"],
   archived: [],
 };
 export const canTransition = (from: ForecastStatus, to: ForecastStatus) => TRANSITIONS[from].includes(to);
