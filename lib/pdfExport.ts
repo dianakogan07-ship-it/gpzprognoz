@@ -12,6 +12,8 @@ export async function exportPdf(root: HTMLElement, filename: string, background 
   for (let i = 0; i < sheets.length; i++) {
     const url = await toPng(sheets[i], {
       pixelRatio: ratio, backgroundColor: background, ...(fontEmbedCSS ? { fontEmbedCSS } : { skipFonts: true }),
+      // Внешние отступы блока (space-y и т. п.) в снимке сдвигают содержимое и обрезают низ — убираем
+      style: { margin: "0" },
       filter: (n) => !(n instanceof HTMLElement && n.dataset.pdfSkip !== undefined),
     });
     const img = await loadImage(url);
@@ -23,6 +25,13 @@ export async function exportPdf(root: HTMLElement, filename: string, background 
     pdf.setFontSize(8);
     pdf.setTextColor(125, 132, 154);
     pdf.text(`${i + 1} / ${sheets.length}`, PW - M, PH - 5, { align: "right" });
+  }
+  // Номера страниц
+  const n = pdf.getNumberOfPages();
+  if (n > 1) {
+    pdf.setFontSize(8);
+    pdf.setTextColor(150);
+    for (let i = 1; i <= n; i++) { pdf.setPage(i); pdf.text(`${i} / ${n}`, PW - M, PH - M + 1, { align: "right" }); }
   }
   pdf.save(filename);
 }
