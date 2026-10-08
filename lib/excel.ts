@@ -137,7 +137,13 @@ export function parseIndexFile(buf: ArrayBuffer, sources: Source[] = []): { rows
 }
 
 export function downloadWorkbook(wb: XLSX.WorkBook, filename: string) {
-  XLSX.writeFile(wb, filename);
+  // Своя ссылка со скачиванием: имя файла сохраняется во всех браузерах
+  const data = XLSX.write(wb, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+  const url = URL.createObjectURL(new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** Чтение простого справочника из Excel: первая строка — названия колонок таблицы */

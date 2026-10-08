@@ -49,7 +49,6 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
     f.region.length ? `регионы: ${f.region.map((k) => counts.reg.get(k)?.label ?? k).join(", ")}` : "все регионы",
   ].join("; ");
   const sources = reference.sources.filter((s) => SOURCE_CODES.includes(s.code));
-  const lock = approved ? undefined : "Выгрузка доступна после утверждения прогноза";
 
   return (
     <div className="report space-y-4" style={{ color: RC.ink }}>
@@ -57,6 +56,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
       <div className="hidden print:block">
         <h1 className="text-2xl font-semibold">Прогноз цен {year}</h1>
         <p className="text-sm" style={{ color: RC.muted }}>{title}{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""} · {sliceText}</p>
+        {!approved && <p className="mt-1 text-sm font-semibold text-amber-700">Прогноз не утверждён — цифры могут измениться</p>}
       </div>
 
       <div className="flex flex-wrap items-center gap-2 print:hidden">
@@ -66,8 +66,8 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
           options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
         <span className="hidden text-xs sm:inline" style={{ color: RC.muted }}>Фильтры общие с вкладкой «Прогноз»</span>
         <div className="ml-auto flex gap-2">
-          <button className="btn-sec" disabled={!approved} title={lock} onClick={() => window.print()}><IconDownload />PDF</button>
-          <button className="btn-sec" disabled={!approved} title={lock} onClick={() => onExcel(slice)}><IconDownload />Excel</button>
+          <button className="btn-sec" onClick={() => window.print()}><IconDownload />PDF</button>
+          <button className="btn-sec" onClick={() => onExcel(slice)}><IconDownload />Excel</button>
         </div>
       </div>
 
