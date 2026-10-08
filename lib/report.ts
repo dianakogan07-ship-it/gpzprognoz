@@ -57,6 +57,9 @@ export function groupSplit(rows: ForecastRow[], key: (r: ForecastRow) => string)
 /** Максимум шкалы: максимальный рост, округлённый вверх до чётного % */
 export const evenCeil = (x: number) => Math.max(2, Math.ceil(x / 2) * 2);
 
+/** Максимум шкалы колец: не меньше 10 %, с запасом в полтора раза над самым большим ростом */
+export const radialMax = (maxTotal: number) => Math.max(10, Math.ceil(Math.max(0, maxTotal)) * 1.5);
+
 /** Число по-русски: запятая, неразрывные пробелы */
 export const fmtNum = (n: number, d = 1) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, " ");
 export const fmtPct = (n: number, sign = true) => `${sign ? (n < 0 ? "−" : "+") : n < 0 ? "−" : ""}${fmtNum(Math.abs(n))} %`;

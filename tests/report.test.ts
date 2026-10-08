@@ -42,3 +42,12 @@ describe("федеральные округа", () => {
     expect(districtOf(null)).toBeNull();
   });
 });
+
+import { radialMax } from "@/lib/report";
+describe("шкала колец", () => {
+  it("не меньше 10 %, иначе максимум, округлённый вверх, × 1,5", () => {
+    expect(radialMax(4.8)).toBe(10);
+    expect(radialMax(9.6)).toBe(15);
+    expect(radialMax(12.1)).toBe(19.5);
+  });
+});
