@@ -16,7 +16,7 @@ const DICTS: { table: string; title: string; pk: string; cols: Col[]; help?: str
   { table: "purchase_methods", title: "Способы закупок", pk: "id", cols: name },
   { table: "purchase_forms", title: "Формы закупок", pk: "id", cols: name },
   { table: "regions", title: "Регионы (ОКАТО)", pk: "code", cols: [{ key: "code", label: "Код ОКАТО", width: "8rem" }, { key: "name", label: "Регион" }] },
-  { table: "okei", title: "ОКЕИ", pk: "code", cols: [{ key: "code", label: "Код" }, { key: "name", label: "Наименование" }, { key: "short", label: "Обозначение" }] },
+  { table: "okei", title: "Единицы измерения", pk: "code", cols: [{ key: "code", label: "Код" }, { key: "name", label: "Наименование" }, { key: "short", label: "Обозначение" }] },
   { table: "okved2", title: "Разделы ОКВЭД2", pk: "letter", cols: [{ key: "letter", label: "Раздел" }, { key: "name", label: "Наименование" }, { key: "div_from", label: "Классы с", type: "number" }, { key: "div_to", label: "по", type: "number" }],
     help: "Первые 2 цифры ОКПД2 соответствуют классу ОКВЭД2; по разделу подбирается прогнозный дефлятор МЭР, если нет индекса по ОКПД2." },
   { table: "okpd2", title: "ОКПД2", pk: "code", cols: [{ key: "code", label: "Код", width: "8rem" }, { key: "name", label: "Наименование" }],
