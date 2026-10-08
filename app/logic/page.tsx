@@ -2,18 +2,11 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, useReference } from "@/components/useReference";
-import { COVERAGE_KEY, MONTHS, formatGrowth, industryLabel } from "@/lib/indexFormat";
+import { COVERAGE_KEY, MONTHS, industryName } from "@/lib/indexFormat";
 import { DEFAULT_VAT, explainExample, lastDataMonth, type IndexRef } from "@/lib/logic";
-import { fmtRub, plural } from "@/lib/forecastView";
 import type { ForecastRow } from "@/lib/forecast";
 import type { Reference } from "@/lib/types";
 
-const STEPS = [
-  { n: 1, title: "Базовая цена", short: "Цена договора прошлого года" },
-  { n: 2, title: "Перерасчёт по месяцам", short: "До последнего месяца с данными" },
-  { n: 3, title: "Рост цен", short: "Индекс отрасли или инфляция" },
-  { n: 4, title: "НДС и итог", short: "Ориентир цены с НДС" },
-];
 
 /** Всё, что нужно для объяснения одной строки: пример или позиция из прогноза */
 interface Explain {
@@ -33,7 +26,6 @@ interface ItemResp {
   data: ForecastRow & { pts?: [number, number | null][] }; version: number; forecast_id: number; title: string; year: number; base_year: number;
 }
 
-const pctOf = (k: number) => formatGrowth(k);
 const monthName = (m: number | null) => (m ? MONTHS[m - 1] : "");
 
 function fromItem(it: ItemResp, ref: Reference): Explain {
@@ -71,9 +63,18 @@ function fromExample(ref: Reference, targetYear: number): Explain {
   };
 }
 
+const rub = (n: number) => `${Math.round(n).toLocaleString("ru-RU")} ₽`;
+const pct = (k: number) => `${k < 1 ? "−" : "+"}${Math.abs((k - 1) * 100).toFixed(1).replace(".", ",")} %`;
+/** Название отрасли простыми словами: «Продукция и услуги сельского хозяйства» → «продукция и услуги сельского хозяйства» */
+const plain = (key: string | null, ref: Reference) => {
+  const n = key ? industryName(key, ref) : null;
+  return n ? n.charAt(0).toLowerCase() + n.slice(1) : key ?? "";
+};
+const statusText = (i: IndexRef | null) => (i ? (i.approved ? "утверждён" : "ещё не утверждён") : "");
+
 export default function LogicPage() {
   const { reference, error } = useReference();
-  const [active, setActive] = useState(1);
+  const [active, setActive] = useState<number | null>(null);
   const [rowId, setRowId] = useState<number | null>(null);
   const [item, setItem] = useState<ItemResp | null>(null);
   const [itemError, setItemError] = useState<string | null>(null);
@@ -84,10 +85,7 @@ export default function LogicPage() {
     const q = new URLSearchParams(window.location.search).get("row");
     if (q) setRowId(Number(q));
     const m = window.location.hash.match(/^#step-([1-4])$/);
-    if (m) {
-      setActive(Number(m[1]));
-      setTimeout(() => document.getElementById(`step-${m[1]}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
-    }
+    if (m) setActive(Number(m[1]));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!rowId) return;
@@ -96,197 +94,108 @@ export default function LogicPage() {
 
   const ex = useMemo(() => (reference ? (item ? fromItem(item, reference) : fromExample(reference, target)) : null), [reference, item, target]);
 
-  function open(n: number) {
-    setActive(n);
-    window.history.replaceState(null, "", `${window.location.search}#step-${n}`);
-    document.getElementById(`step-${n}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  function toggle(n: number) {
+    const next = active === n ? null : n;
+    setActive(next);
+    window.history.replaceState(null, "", `${window.location.search}${next ? `#step-${next}` : ""}`);
   }
 
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!reference || !ex || (rowId && !item && !itemError)) return <p className="hint">Загрузка…</p>;
   const ty = ex.targetYear, by = ex.baseYear;
+  const s2 = ex.step2, s3 = ex.step3;
+  const m0 = ex.months[0] ?? null;
+  const industry = plain(s3.idx?.key ?? ex.okpd2, reference);
+
+  // Шаг 2: рост внутри года
+  const step2Caption = s2.state === "off" ? "пересчёт не загружен" : s2.state === "not_needed" ? "договор декабря" : s2.state === "none" ? "нет данных за месяц"
+    : ex.months.length > 1 ? "рост внутри года, в среднем" : `рост с ${MONTHS_GEN_FROM(m0)} по ${s2.lastMonth ? MONTHS[s2.lastMonth - 1] : "последний месяц"}`;
+  const steps = [
+    { n: 1, value: rub(ex.price), caption: ex.contracts > 1 ? "средняя цена договоров" : "цена договора",
+      info: <>Фактическая цена из отчётности за {by} год, за единицу и без НДС.{ex.contracts > 1 ? ` Договоров: ${ex.contracts}, взята медиана.` : ""}</>,
+      what: `Берём цену из договора ${by} года по отчётности — за единицу и без НДС. Если договоров несколько, берём среднюю цену.`, tab: null },
+    { n: 2, value: s2.coef ? pct(s2.coef) : "+0,0 %", caption: step2Caption,
+      info: s2.state === "off" ? <>Индексы перерасчёта по месяцам за {by} год не загружены — шаг пропущен.</>
+        : <>Росстат, цены производителей. {s2.idx?.source && <SrcLink s={s2.idx.source} />} {statusText(s2.idx) && `Индекс ${statusText(s2.idx)}.`} Вкладка «Перерасчёт цен по месяцам».</>,
+      what: "Договор, заключённый в начале года, не учитывает последующий рост цен — доводим его цену до последнего месяца, за который Росстат опубликовал данные.", tab: "to_december" },
+    { n: 3, value: s3.idx ? pct(s3.idx.value) : "+0,0 %", caption: s3.branch === "industry" ? `рост отрасли в ${ty}` : s3.branch === "cpi" ? `общая инфляция ${ty}` : "индекса нет",
+      warn: s3.branch !== "industry",
+      info: <>{s3.branch === "industry" ? `Отрасль: ${industry}.` : `Индекса отрасли нет — взята общая инфляция.`} {s3.idx?.source && <SrcLink s={s3.idx.source} />} {statusText(s3.idx) && `Индекс ${statusText(s3.idx)}.`} Вкладка «{s3.branch === "industry" ? `Рост цен по отраслям ${ty}` : `Общая инфляция ${ty}`}».</>,
+      what: `Умножаем цену на ожидаемый рост цен в отрасли позиции в ${ty} году. Отрасль определяем по коду ОКПД2 из ГПЗ.`, tab: s3.branch === "industry" ? "forecast" : "cpi" },
+    { n: 4, value: rub(ex.withVat), sub: `${rub(ex.forecastPrice)} без НДС`, caption: `с НДС ${Math.round(ex.vat * 100)} %`,
+      info: <>{ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
+      what: "Получаем прогноз сразу в двух видах: без НДС и с НДС по ставке из строки ГПЗ.", tab: null },
+  ];
+  const cur = steps.find((s) => s.n === active);
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Логика расчётов</h1>
-        <p className="hint mt-1">Как сервис получает прогнозную цену на {ty} год — за четыре шага.</p>
+        <p className="hint mt-1">Как получается прогнозная цена на {ty} год.</p>
       </div>
 
-      {/* Инфографика */}
-      <div className="card">
-        <ol className="flex flex-col items-stretch md:flex-row md:items-start">
-          {STEPS.map((s, i) => (
-            <li key={s.n} className="flex flex-col md:flex-1 md:flex-row md:items-start">
-              <button type="button" onClick={() => open(s.n)} aria-current={active === s.n ? "step" : undefined}
-                className="group flex items-center gap-4 text-left md:w-full md:flex-col md:gap-2 md:text-center">
-                <span className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full border-4 text-xl font-semibold transition md:h-20 md:w-20 md:text-2xl ${active === s.n
-                  ? "border-brand bg-brand text-white shadow-lg shadow-brand/20" : "border-brand/30 bg-white text-brand group-hover:border-brand"}`}>
+      <div className="card space-y-5">
+        {itemError && <p className="text-sm text-red-600">Не удалось открыть позицию: {itemError}. Показан общий пример.</p>}
+        <ol className="flex flex-col md:flex-row md:items-start">
+          {steps.map((s, i) => (
+            <li key={s.n} id={`step-${s.n}`} className="flex flex-col md:flex-1 md:flex-row md:items-start">
+              <div className="flex items-center gap-4 md:w-full md:flex-col md:gap-2 md:text-center">
+                <button type="button" onClick={() => toggle(s.n)} aria-expanded={active === s.n} aria-label={`Шаг ${s.n}`}
+                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-4 text-lg font-semibold transition md:h-16 md:w-16 ${active === s.n
+                    ? "border-brand bg-brand text-white shadow-lg shadow-brand/20" : "border-brand/30 bg-white text-brand hover:border-brand"}`}>
                   {String(s.n).padStart(2, "0")}
-                </span>
-                <span>
-                  <span className={`block font-semibold ${active === s.n ? "text-brand" : "text-slate-900"}`}>{s.n === 3 ? `${s.title} на ${ty}` : s.title}</span>
-                  <span className="block text-sm text-slate-500">{s.short}</span>
-                </span>
-              </button>
-              {i < STEPS.length - 1 && (
-                <span aria-hidden className="ml-8 h-6 border-l-2 border-dashed border-brand/40 md:ml-0 md:mt-10 md:h-0 md:w-12 md:shrink-0 md:border-l-0 md:border-t-2 lg:w-20" />
-              )}
+                </button>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-1 md:justify-center">
+                    <button type="button" onClick={() => toggle(s.n)} className={`whitespace-nowrap text-xl font-semibold ${s.warn ? "text-amber-700" : "text-slate-900"}`}>{s.value}</button>
+                    <Info>{s.info}</Info>
+                  </div>
+                  <p className="text-sm text-slate-500">{s.caption}</p>
+                  {s.sub && <p className="mt-1 text-base font-semibold text-slate-700">{s.sub}</p>}
+                  {s.warn && <p className="text-xs font-medium text-amber-700">согласовать</p>}
+                </div>
+              </div>
+              {i < steps.length - 1 && <span aria-hidden className="ml-7 h-5 border-l-2 border-dashed border-brand/40 md:ml-0 md:mt-8 md:h-0 md:w-8 md:shrink-0 md:border-l-0 md:border-t-2 lg:w-12" />}
             </li>
           ))}
         </ol>
-      </div>
 
-      {/* Пример */}
-      <Example ex={ex} item={item} itemError={itemError} />
+        {cur && (
+          <div className="rounded-xl border border-brand/30 bg-brand-light/40 p-4 text-sm text-slate-700">
+            <p>{cur.what}</p>
+            {cur.n === 3 && <p className="mt-2">Нет индекса отрасли → общая инфляция, пометка «Согласовать».</p>}
+            {cur.tab && <Link href={`/indices?tab=${cur.tab}`} className="mt-2 inline-block font-medium text-brand hover:underline">Смотреть индексы →</Link>}
+          </div>
+        )}
 
-      {/* Шаги */}
-      <div className="space-y-3">
-        <Step n={1} active={active} onOpen={open} title="Базовая цена"
-          what={`Берём фактическую цену из договоров ${by} года по отчётности — за единицу и без НДС.`}
-          formula="цена за единицу = сумма договора без НДС / количество; если договоров несколько — берём среднюю (медиану), а цены, отличающиеся больше чем в 2 раза, не учитываем"
-          link={<Link href="/directories" className="text-brand hover:underline">Справочники → Повторяемость закупок</Link>}>
-          <p>Позиции ГПЗ без заключённого договора в расчёт не попадают — их видно в карточке прогноза по ссылке «не вошли».</p>
-          <p>Разовые закупки (по справочнику повторяемости) считаются, но помечаются как справочный ориентир.</p>
-          {ex.row && <p className="text-slate-900">Для этой позиции: {ex.contracts} {plural(ex.contracts, "договор", "договора", "договоров")}, базовая цена {fmtRub(ex.price)}.</p>}
-        </Step>
-
-        <Step n={2} active={active} onOpen={open} title="Перерасчёт цен по месяцам" extra
-          what={`Договор, заключённый в начале года, не учитывает рост цен за следующие месяцы. Доводим его цену до уровня последнего месяца, за который Росстат опубликовал данные${ex.step2.lastMonth ? ` (сейчас — ${monthName(ex.step2.lastMonth)} ${by})` : ""}.`}
-          formula="коэффициент = индекс цен производителей последнего месяца / индекс цен производителей месяца договора (оба — к декабрю прошлого года)"
-          link={<Link href="/indices?tab=to_december" className="text-brand hover:underline">Индексы → Перерасчёт цен по месяцам</Link>}>
-          {ex.step2.state === "off" && <Notice tone="slate">Шаг пропущен: индексы перерасчёта цен по месяцам за {by} год не загружены. Цена договора берётся как есть.</Notice>}
-          {ex.step2.state === "none" && <Notice tone="amber">Для месяца договора нет коэффициента — цена взята без пересчёта.</Notice>}
-          {ex.step2.state === "not_needed" && <Notice tone="slate">Договоры заключены в декабре — пересчёт не нужен.</Notice>}
-          {ex.step2.state === "partial" && <Notice tone="amber">Коэффициенты есть не для всех договоров позиции — часть цен взята без пересчёта.</Notice>}
-          {ex.row && ex.months.length > 0 && <p className="text-slate-900">Месяцы договоров: {ex.months.map(monthName).join(", ")}.</p>}
-        </Step>
-
-        <Step n={3} active={active} onOpen={open} title={`Рост цен на ${ty}`}
-          what={`Ищем ожидаемый рост цен для отрасли позиции по её коду ОКПД2.`}
-          formula={`прогноз без НДС = цена после шага 2 × индекс роста цен на ${ty}`}
-          link={<><Link href="/indices?tab=forecast" className="text-brand hover:underline">Индексы → Рост цен по отраслям {ty}</Link>{" · "}<Link href="/indices?tab=cpi" className="text-brand hover:underline">Общая инфляция {ty}</Link></>}>
-          <Fork ex={ex} reference={reference} />
-          <Notice tone="slate">Неверный код ОКПД2 в ГПЗ даёт неверный индекс. Например, бумага с кодом 28 получит индекс машиностроения вместо индекса бумажной отрасли (код 17).</Notice>
-        </Step>
-
-        <Step n={4} active={active} onOpen={open} title="НДС и итог"
-          what="Начисляем НДС по ставке из строки ГПЗ. Получаем ориентир цены с НДС."
-          formula="итог = прогноз без НДС × (1 + ставка НДС)"
-          link={<span className="text-slate-500">Таблица прогноза и выгрузка в Excel показывают цену без НДС.</span>}>
-          {!ex.vatFromFile && <Notice tone="slate">В файлах нет ставки НДС для этой позиции — взята основная ставка {Math.round(DEFAULT_VAT * 100)} %.</Notice>}
-          {ex.edited && <Notice tone="amber">Цена этой позиции изменена вручную — итог отличается от расчёта по формуле.</Notice>}
-        </Step>
+        <p className="text-sm text-slate-600">
+          {ex.row
+            ? <>Позиция «{ex.row.subject}» из прогноза <Link href={`/forecasts/${ex.row.forecastId}`} className="text-brand hover:underline">{ex.row.title}</Link>. <Link href="/logic" className="text-brand hover:underline">Общий пример</Link></>
+            : <>Пример на договоре {m0 ? MONTHS_GEN_OF(m0) : ""} {by}, {industry}. Расчёт своей позиции — кнопка «Как посчитано» в таблице прогноза.</>}
+        </p>
       </div>
     </div>
   );
 }
 
-function Step({ n, active, onOpen, title, what, formula, link, extra, children }: {
-  n: number; active: number; onOpen: (n: number) => void; title: string; what: string; formula: string; link: ReactNode; extra?: boolean; children?: ReactNode;
-}) {
-  const open = active === n;
-  return (
-    <section id={`step-${n}`} className={`card scroll-mt-4 transition ${open ? "ring-2 ring-brand" : ""}`}>
-      <button type="button" className="flex w-full items-start gap-3 text-left" onClick={() => onOpen(n)} aria-expanded={open}>
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${open ? "bg-brand text-white" : "bg-brand-light text-brand"}`}>{n}</span>
-        <span className="min-w-0 flex-1">
-          <span className="font-semibold text-slate-900">{title}</span>
-          {extra && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">доп. настройка</span>}
-          <span className="mt-0.5 block text-sm text-slate-600">{what}</span>
-        </span>
-        <span className={`text-slate-400 transition ${open ? "rotate-180" : ""}`}>▾</span>
-      </button>
-      {open && (
-        <div className="mt-3 space-y-2 pl-11 text-sm text-slate-700">
-          <p><span className="font-medium text-slate-900">Формула словами:</span> {formula}.</p>
-          <p><span className="font-medium text-slate-900">Данные:</span> {link}</p>
-          {children}
-        </div>
-      )}
-    </section>
-  );
+const MONTHS_GEN_FROM = (m: number | null) => (m ? ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1] : "начала года");
+const MONTHS_GEN_OF = (m: number) => ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1];
+
+function SrcLink({ s }: { s: { name: string; url: string } }) {
+  return s.url ? <a href={s.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{s.name}</a> : <>{s.name}</>;
 }
 
-function Notice({ tone, children }: { tone: "amber" | "slate"; children: ReactNode }) {
-  return <p className={`rounded-lg px-3 py-2 ${tone === "amber" ? "border border-amber-200 bg-amber-50 text-amber-900" : "bg-slate-50 text-slate-600"}`}>{children}</p>;
-}
-
-/** Развилка шага 3: отраслевой индекс или общая инфляция */
-function Fork({ ex, reference }: { ex: Explain; reference: Reference }) {
-  const s = ex.step3;
-  const industry = s.branch === "industry";
-  const box = (on: boolean) => `rounded-lg border p-3 ${on ? "border-brand bg-brand-light/50" : "border-dashed border-slate-200 text-slate-400"}`;
+/** Иконка «i» с подсказкой: по наведению и по нажатию на телефоне */
+function Info({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      <div className={box(industry)}>
-        <p className="font-medium">Нашли отрасль →</p>
-        <p>отраслевой индекс{industry && s.idx ? `: ${industryLabel(s.idx.key, reference)}, ${pctOf(s.idx.value)}` : ""}</p>
-        {industry && s.level === "okved2" && <p className="text-xs text-slate-500">по коду ОКПД2 индекса нет — взят индекс раздела отрасли</p>}
-      </div>
-      <div className={box(!industry)}>
-        <p className="font-medium">Не нашли →</p>
-        <p>общая инфляция{!industry && s.idx ? `, ${pctOf(s.idx.value)}` : ""} + пометка</p>
-        <span className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs font-medium ${!industry ? "bg-amber-100 text-amber-900" : "bg-slate-100"}`}>Согласовать человеком</span>
-        {s.branch === "none" && <p className="mt-1 text-xs text-amber-800">Общей инфляции на {ex.targetYear} тоже нет — цена не проиндексирована.</p>}
-      </div>
-      {industry && s.needsApproval && <p className="text-xs text-amber-800 sm:col-span-2">Индекс ещё не утверждён — позиция тоже требует согласования.</p>}
-    </div>
-  );
-}
-
-function Src({ idx, tab, label }: { idx: IndexRef | null; tab: string; label: string }) {
-  return (
-    <>
-      <Link href={`/indices?tab=${tab}`} className="text-brand hover:underline">{label}</Link>
-      {idx?.source && <> · {idx.source.url ? <a href={idx.source.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{idx.source.name}</a> : idx.source.name}</>}
-      {idx && <> · <span className={idx.approved ? "text-emerald-700" : "text-amber-700"}>{idx.approved ? "утверждён" : "не утверждён"}</span></>}
-    </>
-  );
-}
-
-function Node({ value, caption, strong }: { value: ReactNode; caption: ReactNode; strong?: boolean }) {
-  return (
-    <div className="min-w-0 md:flex-1">
-      <p className={`whitespace-nowrap ${strong ? "text-lg font-semibold text-slate-900" : "font-medium text-slate-900"}`}>{value}</p>
-      <p className="mt-0.5 text-xs leading-snug text-slate-500">{caption}</p>
-    </div>
-  );
-}
-const Arrow = ({ sign = "→" }: { sign?: string }) => <span aria-hidden className="pt-0.5 text-slate-400"><span className="md:hidden">{sign === "→" ? "↓" : sign}</span><span className="hidden md:inline">{sign}</span></span>;
-
-function Example({ ex, item, itemError }: { ex: Explain; item: ItemResp | null; itemError: string | null }) {
-  const s2 = ex.step2, s3 = ex.step3;
-  const m0 = ex.months[0] ?? null;
-  return (
-    <div className="card space-y-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-semibold text-slate-900">{ex.row ? "Как посчитана позиция" : "Пример расчёта"}</h2>
-        {ex.row
-          ? <span className="text-sm text-slate-600">{ex.row.subject} · ОКПД2 {ex.okpd2} · <Link href={`/forecasts/${ex.row.forecastId}`} className="text-brand hover:underline">{ex.row.title}, v{ex.row.version}</Link> · <Link href="/logic" className="text-brand hover:underline">общий пример</Link></span>
-          : <span className="text-sm text-slate-600">Договор {monthName(m0)} {ex.baseYear}, отрасль ОКПД2 {ex.okpd2}, НДС {Math.round(ex.vat * 100)} %. Индексы — из базы на сегодня.</span>}
-      </div>
-      {itemError && <p className="text-sm text-red-600">Не удалось открыть позицию: {itemError}. Показан общий пример.</p>}
-      <div className="flex flex-col gap-2 rounded-lg bg-slate-50 p-4 md:flex-row md:items-start md:gap-3">
-        <Node value={fmtRub(ex.price)} caption={ex.row ? `${ex.contracts > 1 ? "медиана цен договоров" : "цена договора"} ${ex.baseYear}, без НДС` : `цена договора ${ex.baseYear}, без НДС`} />
-        <Arrow />
-        <Node value={s2.coef ? `× ${s2.coef.toFixed(4).replace(".", ",")}` : "× 1"}
-          caption={s2.state === "off" ? "перерасчёт по месяцам выключен — шаг пропущен"
-            : s2.state === "not_needed" ? "договор декабря — пересчёт не нужен"
-            : s2.state === "none" ? "нет коэффициента за месяц договора"
-            : <>{ex.row && ex.months.length > 1 ? "в среднем по договорам" : `${monthName(m0)} → ${monthName(s2.lastMonth)}`}{!ex.row && <> · <Src idx={s2.idx} tab="to_december" label="Перерасчёт по месяцам" /></>}{ex.row && <> · <Link href="/indices?tab=to_december" className="text-brand hover:underline">Перерасчёт по месяцам</Link></>}</>} />
-        <Arrow />
-        <Node value={`× ${s3.idx ? s3.idx.value.toFixed(4).replace(".", ",") : "1"}`}
-          caption={s3.branch === "none" ? "индекса нет — без роста" : <>
-            {s3.branch === "industry" ? `рост отрасли ${s3.idx?.key ?? ""} на ${ex.targetYear}` : `общая инфляция ${ex.targetYear}`} · <Src idx={s3.idx} tab={s3.branch === "industry" ? "forecast" : "cpi"} label="Индексы" />
-            {s3.branch !== "industry" && <span className="mt-1 block font-medium text-amber-800">Согласовать человеком</span>}
-          </>} />
-        <Arrow />
-        <Node value={`+ НДС ${Math.round(ex.vat * 100)} %`} caption={ex.vatFromFile ? "ставка из ГПЗ" : "ставки нет в файлах — основная ставка"} />
-        <Arrow sign="=" />
-        <Node strong value={fmtRub(ex.withVat)} caption={<>ориентир на {ex.targetYear} с НДС · без НДС {fmtRub(ex.forecastPrice)}{ex.edited ? " · изменено вручную" : ""}</>} />
-      </div>
-      {!item && <p className="hint">Чтобы увидеть расчёт конкретной позиции, нажмите «Как посчитано» в строке таблицы прогноза.</p>}
-    </div>
+    <span className="group/info relative inline-flex" onMouseLeave={() => setOpen(false)}>
+      <button type="button" aria-label="Откуда число" onClick={() => setOpen(!open)}
+        className="flex h-4 w-4 items-center justify-center rounded-full border border-slate-400 text-[10px] font-semibold leading-none text-slate-500 hover:border-brand hover:text-brand">i</button>
+      <span className={`absolute -left-28 top-full z-20 mt-1 w-60 md:left-1/2 md:w-64 md:-translate-x-1/2 rounded-lg border border-slate-200 bg-white p-3 text-left text-xs font-normal text-slate-700 shadow-lg transition group-hover/info:visible group-hover/info:opacity-100 ${open ? "visible opacity-100" : "invisible opacity-0"}`}>
+        {children}
+      </span>
+    </span>
   );
 }
