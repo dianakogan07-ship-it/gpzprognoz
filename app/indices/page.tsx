@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, useReference } from "@/components/useReference";
 import { Modal } from "@/components/Modal";
 import { IconCheck, IconDownload, IconEdit, IconPlus, IconTrash, IconUpload } from "@/components/Icons";
@@ -235,12 +235,58 @@ export default function IndicesPage() {
   // Пересчёт по месяцам: индексы одной отрасли — одной строкой с раскрытием
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const toggleGroup = (k: string) => setExpanded((p) => { const n = new Set(p); if (n.has(k)) n.delete(k); else n.add(k); return n; });
-  const groups: { key: string; items: PriceIndex[] }[] = [];
+  // Раздел (две цифры) → коды внутри него → месяцы
+  const divisions: { div: string; groups: { key: string; items: PriceIndex[] }[] }[] = [];
   if (tabKind === "to_december") {
     const byKey = new Map<string, PriceIndex[]>();
     for (const ix of rows) { const k = ix.key ?? ""; byKey.get(k)?.push(ix) ?? byKey.set(k, [ix]); }
-    for (const [key, items] of byKey) groups.push({ key, items });
+    for (const [key, items] of byKey) {
+      const div = /^\d{2}/.test(key) ? key.slice(0, 2) : key;
+      const d = divisions.find((x) => x.div === div) ?? (divisions.push({ div, groups: [] }), divisions[divisions.length - 1]);
+      d.groups.push({ key, items });
+    }
+    // Сначала весь раздел, затем подгруппы по порядку
+    for (const d of divisions) d.groups.sort((a, b) => (a.key === d.div ? -1 : b.key === d.div ? 1 : a.key.localeCompare(b.key, "ru", { numeric: true })));
   }
+  const pad = (depth: number) => ({ paddingLeft: `${0.75 + depth * 1.5}rem` });
+  const summaryRow = (key: string, items: PriceIndex[], depth: number, open: boolean, label: ReactNode, count: string) => {
+    const vals = items.map((i) => i.value);
+    const pending = items.filter((i) => !i.approved);
+    const src = sourceOf(items[0].source_code);
+    const ids = items.map((i) => i.id);
+    const allSel = ids.every((id) => selected.has(id));
+    return (
+      <tr key={key} className={`cursor-pointer hover:bg-slate-50 ${depth ? "bg-slate-50/50" : ""}`} onClick={() => toggleGroup(key)}>
+        {canEdit && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={allSel} onChange={() => {
+          const s = new Set(selected); ids.forEach((id) => (allSel ? s.delete(id) : s.add(id))); setSelected(s);
+        }} /></td>}
+        <td style={pad(depth)}><div className="flex items-start"><span className={`mr-2 inline-block shrink-0 leading-5 text-slate-400 transition ${open ? "rotate-90" : ""}`}>›</span><div className={depth ? "text-slate-700" : ""}>{label}</div></div></td>
+        <td className="whitespace-nowrap text-slate-600">{count}</td>
+        <td>{items[0].year}</td>
+        <td className="whitespace-nowrap text-right font-medium text-slate-900">{formatGrowth(Math.min(...vals))} … {formatGrowth(Math.max(...vals))}</td>
+        <td>{depth ? null : src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline" onClick={(e) => e.stopPropagation()}>{src.name}</a> : items[0].source_code ?? <span className="text-slate-400">не указан</span>}</td>
+        <td>{pending.length
+          ? <span className="inline-flex whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200">Ждут проверки: {pending.length}</span>
+          : <StatusBadge approved />}</td>
+        <td className="text-xs text-slate-600">{!depth && lastMonth ? `Пересчёт до уровня: ${MONTHS[lastMonth - 1]} ${year}` : ""}</td>
+        {canEdit && (
+          <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+            {pending.length > 0 && <button className="btn-sec !px-2.5 !py-1" disabled={busy} onClick={() => approve(pending.map((i) => i.id))}>Утвердить все</button>}
+          </td>
+        )}
+      </tr>
+    );
+  };
+  const renderGroup = (g: { key: string; items: PriceIndex[] }, depth: number, label: ReactNode) => {
+    if (g.items.length === 1 && !depth) return renderRow(g.items[0]);
+    const open = expanded.has(g.key);
+    return (
+      <Fragment key={g.key}>
+        {summaryRow(g.key, g.items, depth, open, label, `${g.items.length} ${plural(g.items.length, "месяц", "месяца", "месяцев")}`)}
+        {open && g.items.map((ix) => renderRow(ix, true))}
+      </Fragment>
+    );
+  };
   const renderRow = (ix: PriceIndex, nested = false) => {
     const src = sourceOf(ix.source_code);
     return (
@@ -248,7 +294,7 @@ export default function IndicesPage() {
                     {canEdit && <td><input type="checkbox" checked={selected.has(ix.id)} onChange={() => {
                       const s = new Set(selected); if (s.has(ix.id)) s.delete(ix.id); else s.add(ix.id); setSelected(s);
                     }} /></td>}
-                    {tab.kind !== "cpi" && <td className={nested ? "pl-8 text-slate-500" : ""}>{nested ? "" : reference ? industryLabel(ix.key, reference) : ix.key}</td>}
+                    {tab.kind !== "cpi" && <td className={nested ? "text-slate-500" : ""}>{nested ? "" : reference ? industryLabel(ix.key, reference) : ix.key}</td>}
                     {tab.kind === "to_december" && <td>{ix.month ? MONTHS[ix.month - 1] : "—"}</td>}
                     <td>{ix.year}</td>
                     <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
@@ -458,7 +504,7 @@ export default function IndicesPage() {
           <div className="space-y-2">
             <p className="hint max-w-3xl">{tabKind === "to_december" && lastMonth
               ? `Доводит цену договора до уровня последнего месяца с данными Росстата (сейчас — ${MONTHS[lastMonth - 1]} ${year}).`
-              : tab.hint}</p>
+              : tab.hint}{tabKind === "to_december" && " Если у раздела есть подгруппы, позиции с кодом подгруппы считаются по её индексу, остальные — по индексу всего раздела."}</p>
             {years.length > 1 && (
               <div className="flex flex-wrap items-center gap-2 text-sm">
                 <span className="text-slate-600">Год:</span>
@@ -514,36 +560,19 @@ export default function IndicesPage() {
               {rows.length === 0 && (
                 <tr><td colSpan={9} className="py-8 text-center text-slate-500">На этой вкладке нет индексов, ждущих проверки</td></tr>
               )}
-              {tabKind !== "to_december" ? rows.map((ix) => renderRow(ix)) : groups.map((g) => {
-                if (g.items.length === 1) return renderRow(g.items[0]);
-                const open = expanded.has(g.key);
-                const vals = g.items.map((i) => i.value);
-                const pending = g.items.filter((i) => !i.approved);
-                const src = sourceOf(g.items[0].source_code);
-                const ids = g.items.map((i) => i.id);
-                const allSel = ids.every((id) => selected.has(id));
+              {tabKind !== "to_december" ? rows.map((ix) => renderRow(ix)) : divisions.map((d) => {
+                // Один код в разделе — без лишнего уровня
+                if (d.groups.length === 1) return renderGroup(d.groups[0], 0, reference ? industryLabel(d.groups[0].key, reference) : d.groups[0].key);
+                const all = d.groups.flatMap((g) => g.items);
+                const open = expanded.has(`d:${d.div}`);
+                const subs = d.groups.filter((g) => g.key !== d.div).length;
                 return (
-                  <Fragment key={g.key}>
-                    <tr className="cursor-pointer hover:bg-slate-50" onClick={() => toggleGroup(g.key)}>
-                      {canEdit && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={allSel} onChange={() => {
-                        const s = new Set(selected); ids.forEach((id) => (allSel ? s.delete(id) : s.add(id))); setSelected(s);
-                      }} /></td>}
-                      <td><span className={`mr-2 inline-block text-slate-400 transition ${open ? "rotate-90" : ""}`}>›</span>{reference ? industryLabel(g.key, reference) : g.key}</td>
-                      <td className="whitespace-nowrap text-slate-600">{g.items.length} {plural(g.items.length, "месяц", "месяца", "месяцев")}</td>
-                      <td>{g.items[0].year}</td>
-                      <td className="whitespace-nowrap text-right font-medium text-slate-900">{formatGrowth(Math.min(...vals))} … {formatGrowth(Math.max(...vals))}</td>
-                      <td>{src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline" onClick={(e) => e.stopPropagation()}>{src.name}</a> : g.items[0].source_code ?? <span className="text-slate-400">не указан</span>}</td>
-                      <td>{pending.length
-                        ? <span className="inline-flex whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200">Ждут проверки: {pending.length}</span>
-                        : <StatusBadge approved />}</td>
-                      <td className="text-xs text-slate-600">{lastMonth ? `Пересчёт до уровня: ${MONTHS[lastMonth - 1]} ${year}` : ""}</td>
-                      {canEdit && (
-                        <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
-                          {pending.length > 0 && <button className="btn-sec !px-2.5 !py-1" disabled={busy} onClick={() => approve(pending.map((i) => i.id))}>Утвердить все</button>}
-                        </td>
-                      )}
-                    </tr>
-                    {open && g.items.map((ix) => renderRow(ix, true))}
+                  <Fragment key={`d:${d.div}`}>
+                    {summaryRow(`d:${d.div}`, all, 0, open,
+                      <>{reference ? industryLabel(d.div, reference) : d.div}<span className="mt-0.5 block text-xs text-slate-500">
+                        {d.groups.some((g) => g.key === d.div) ? "весь раздел и " : ""}{subs} {plural(subs, "подгруппа", "подгруппы", "подгрупп")}</span></>,
+                      `${d.groups.length} ${plural(d.groups.length, "индекс", "индекса", "индексов")}`)}
+                    {open && d.groups.map((g) => renderGroup(g, 1, g.key === d.div ? `Весь раздел ${g.key}` : reference ? `Подгруппа ${industryLabel(g.key, reference)}` : g.key))}
                   </Fragment>
                 );
               })}
