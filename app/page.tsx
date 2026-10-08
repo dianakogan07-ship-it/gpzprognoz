@@ -16,15 +16,11 @@ type Sort = "year" | "updated" | "status";
 const STATUS_ORDER: ForecastStatus[] = ["draft", "review", "approved", "rejected", "archived"];
 const NBSP = "\u00a0";
 const numRu = (n: number, d = 0) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, NBSP);
-/** Сумма в млн ₽ с двумя знаками, меньше миллиона — в тыс. ₽ */
-const moneyOf = (n: number) => (Math.abs(n) >= 1e6 ? { value: numRu(n / 1e6, 2), unit: "млн" as const } : { value: numRu(n / 1e3, 0), unit: "тыс" as const });
-const moneyIn = (n: number, unit: "млн" | "тыс") => (unit === "млн" ? numRu(n / 1e6, 2) : numRu(n / 1e3, 0));
 const pctSigned = (g: number) => `${g < 0 ? "−" : "+"}${numRu(Math.abs(g), 1)}${NBSP}%`;
 
 function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a: string) => void }) {
   const router = useRouter();
   const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
-  const money = moneyOf(s.forecastSum);
   const archived = c.status === "archived";
   const items: MenuItem[] = [
     ...(archived ? [] : [{ label: "Редактировать", onClick: () => onAction(c, "edit") }]),
@@ -54,8 +50,7 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
         )}
         <div className="grid grid-cols-2 gap-2">
           <Tile value={pctSigned(s.growth)} label="рост цен" tone={s.growth < 0 ? "text-red-700" : undefined} />
-          <Tile value={`${money.value}${NBSP}${money.unit === "млн" ? "млн" : "тыс."}${NBSP}₽`} label="сумма цен позиций"
-            note={`(в ${c.base_year} — ${moneyIn(s.baseSum, money.unit)})`} />
+          <Tile value={numRu(s.contracts)} label={`${plural(s.contracts, "договор", "договора", "договоров")} ${c.base_year} в основе`} />
           <Tile value={s.subjects ? numRu(s.subjects) : numRu(s.items)} label={plural(s.subjects || s.items, "предмет закупки", "предмета закупки", "предметов закупки")}
             href={`/forecasts/${c.id}?group=subject`} />
           <Tile value={s.categories ? numRu(s.categories) : "—"} label={plural(s.categories ?? 0, "категория", "категории", "категорий")}
