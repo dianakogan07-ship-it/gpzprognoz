@@ -3,7 +3,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { IconDownload } from "./Icons";
 import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
-import { EMPTY_FILTERS, filterRows, regionKey, type ViewRow } from "@/lib/forecastView";
+import { EMPTY_FILTERS, filterRows, fmtRub, regionKey, type ViewRow } from "@/lib/forecastView";
 import { lastDataMonth } from "@/lib/logic";
 import { RC, evenCeil, radialMax, fmtNum, fmtPct, fmtRubInt, groupSplit, splitGrowth } from "@/lib/report";
 import { isActiveIndex, type Reference } from "@/lib/types";
@@ -289,55 +289,63 @@ function Bars({ groups: all, cpi }: { groups: Group[]; cpi: number | null }) {
   );
 }
 
-/** Цена по регионам — для предметов, закупаемых в двух и более регионах */
+/** Сумма для отчёта: от 1 млн — в млн с одним знаком, меньше — с копейками */
+const money = (n: number) => (Math.abs(n) >= 1e6 ? `${fmtNum(n / 1e6)}\u00a0млн\u00a0₽` : fmtRub(n).replace(/\s/g, "\u00a0"));
+
+/** Цена по регионам: таблица по предметам, закупаемым в двух и более регионах. Без интерактива — одинаково на экране и в PDF */
 function Regions({ rows, year, baseYear }: { rows: ForecastRow[]; year: number; baseYear: number }) {
   const items = useMemo(() => {
     const m = new Map<string, ForecastRow[]>();
     for (const r of rows) { const k = `${r.subject}|${r.unitLabel}`; m.get(k)?.push(r) ?? m.set(k, [r]); }
-    return [...m.entries()]
-      .map(([key, rs]) => ({ key, subject: rs[0].subject, unit: rs[0].unitLabel, rows: rs, sum: rs.reduce((s, r) => s + r.basePrice * r.contracts, 0) }))
-      .filter((x) => new Set(x.rows.map((r) => r.regionName ?? r.region ?? "")).size >= 2)
-      .sort((a, b) => b.sum - a.sum);
+    return [...m.values()].map((rs) => {
+      // Несколько строк одного региона (разные коды WS) — среднее
+      const byReg = new Map<string, ForecastRow[]>();
+      for (const r of rs) { const k = r.regionName ?? r.region ?? "Регион не указан"; byReg.get(k)?.push(r) ?? byReg.set(k, [r]); }
+      const regs = [...byReg.entries()].map(([name, g]) => ({
+        name, base: g.reduce((s, r) => s + r.basePrice, 0) / g.length, fc: g.reduce((s, r) => s + r.forecastPrice, 0) / g.length,
+      })).sort((x, y) => x.fc - y.fc);
+      return { subject: rs[0].subject, unit: rs[0].unitLabel, regs, sum: rs.reduce((s, r) => s + r.basePrice * r.contracts, 0) };
+    }).filter((x) => x.regs.length >= 2).sort((a, b) => b.sum - a.sum);
   }, [rows]);
-  const [pick, setPick] = useState<string | null>(null);
   if (!items.length) return null;
-  const cur = items.find((x) => x.key === pick) ?? items[0];
-  // Несколько строк одного региона (разные коды WS) — среднее
-  const byReg = new Map<string, ForecastRow[]>();
-  for (const r of cur.rows) { const k = r.regionName ?? r.region ?? "Не указан"; byReg.get(k)?.push(r) ?? byReg.set(k, [r]); }
-  const regs = [...byReg.entries()].map(([name, rs]) => ({
-    name, base: rs.reduce((s, r) => s + r.basePrice, 0) / rs.length, fc: rs.reduce((s, r) => s + r.forecastPrice, 0) / rs.length,
-  })).sort((a, b) => a.fc - b.fc);
-  const lo = Math.min(...regs.map((r) => r.base)), hi = Math.max(...regs.map((r) => r.fc));
-  const pad = (hi - lo) * 0.08 || hi * 0.05;
-  const min = lo - pad, max = hi + pad;
-  const x = (v: number) => `${((v - min) / (max - min)) * 100}%`;
   return (
-    <Card title="Цена по регионам" sub="Один и тот же предмет в разных регионах стоит по-разному — ориентир берите по своему региону">
-      <select className="inp w-auto max-w-full print:hidden" value={cur.key} onChange={(e) => setPick(e.target.value)}>
-        {items.map((it) => <option key={it.key} value={it.key}>{it.subject}, ₽/{it.unit}</option>)}
-      </select>
-      <p className="hidden text-sm font-medium print:block">{cur.subject}, ₽/{cur.unit}</p>
-      <ul className="mt-4 space-y-4">
-        {regs.map((r) => (
-          <li key={r.name}>
-            <p className="text-sm">{r.name}</p>
-            <div className="relative my-2 h-3">
-              <span className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2" style={{ background: RC.track }} />
-              <span className="absolute top-1/2 h-0.5 -translate-y-1/2" style={{ left: x(r.base), width: `calc(${x(r.fc)} - ${x(r.base)})`, background: "#8A93A8" }} />
-              <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: x(r.base), background: RC.sky }} />
-              <span className="absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ left: x(r.fc), background: RC.navy }} />
-            </div>
-            <p className="text-xs" style={{ color: RC.muted }}>{fmtRubInt(r.base)} → <b style={{ color: RC.ink }}>{fmtRubInt(r.fc)}</b> за {cur.unit}</p>
-          </li>
-        ))}
-      </ul>
-      <div className="mt-3 flex justify-between border-t border-slate-100 pt-2 text-[11px]" style={{ color: RC.muted }}>
-        <span>{fmtRubInt(min)}</span><span className="hidden sm:inline">{fmtRubInt((min + max) / 2)}</span><span>{fmtRubInt(max)}</span>
-      </div>
-      <div className="mt-2 flex gap-4 text-xs" style={{ color: RC.muted }}>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: RC.sky }} />цена {baseYear}</span>
-        <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full" style={{ background: RC.navy }} />прогноз {year}</span>
+    <Card title="Цена по регионам" sub="Один и тот же предмет в разных регионах стоит по-разному — ориентир берите по своему региону. Цены без НДС.">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs uppercase tracking-wide" style={{ color: RC.muted }}>
+              <th className="py-2 pr-3 font-medium">Регион</th>
+              <th className="hidden py-2 pr-3 text-right font-medium sm:table-cell">Цена {baseYear}</th>
+              <th className="py-2 pr-3 text-right font-medium"><span className="hidden sm:inline">Прогноз {year}</span><span className="sm:hidden">Цена {baseYear} → прогноз {year}</span></th>
+              <th className="hidden py-2 text-right font-medium sm:table-cell">Отличие от минимума</th>
+            </tr>
+          </thead>
+          {items.map((it) => {
+            const min = it.regs[0].fc;
+            return (
+              <tbody key={`${it.subject}|${it.unit}`} className="break-inside-avoid">
+                <tr><td colSpan={4} className="border-t border-slate-200 pb-1 pt-3 font-semibold">{it.subject}, ₽/{it.unit}</td></tr>
+                {it.regs.map((r, i) => {
+                  const diff = min > 0 ? (r.fc / min - 1) * 100 : 0;
+                  const label = i === 0 ? "минимум" : `+${fmtNum(diff, diff < 10 ? 1 : 0)}\u00a0%`;
+                  return (
+                    <tr key={r.name} className="align-top">
+                      <td className="py-1 pr-3 pl-3" style={{ color: RC.ink }}>
+                        {r.name}
+                        <span className="block text-xs font-semibold sm:hidden" style={{ color: i === 0 ? RC.teal : RC.blue }}>{label}</span>
+                      </td>
+                      <td className="hidden whitespace-nowrap py-1 pr-3 text-right sm:table-cell" style={{ color: RC.muted }}>{money(r.base)}</td>
+                      <td className="whitespace-nowrap py-1 pr-3 text-right font-semibold">
+                        <span className="block text-xs font-normal sm:hidden" style={{ color: RC.muted }}>{money(r.base)}</span>{money(r.fc)}
+                      </td>
+                      <td className="hidden whitespace-nowrap py-1 text-right font-semibold sm:table-cell" style={{ color: i === 0 ? RC.teal : RC.blue }}>{label}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            );
+          })}
+        </table>
       </div>
     </Card>
   );
