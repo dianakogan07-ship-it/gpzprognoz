@@ -71,8 +71,8 @@ const fmtNum = (n: number) => n.toLocaleString("ru-RU", { maximumFractionDigits:
 function SortTh({ k, f, set, children, right, extra }: { k: SortKey; f: Filters; set: (p: Partial<Filters>) => void; children: React.ReactNode; right?: boolean; extra?: ReactNode }) {
   const active = f.sort === k;
   return (
-    <th className={right ? "text-right" : ""}>
-      <button className={`inline-flex items-center gap-1 uppercase hover:text-slate-800 ${active ? "text-brand" : ""}`}
+    <th className={`whitespace-nowrap ${right ? "text-right" : ""}`}>
+      <button className={`inline-flex items-center gap-1 whitespace-nowrap uppercase hover:text-slate-800 ${active ? "text-brand" : ""}`}
         onClick={() => set(active ? (f.dir === "asc" ? { dir: "desc" } : { sort: null, dir: "asc" }) : { sort: k, dir: k === "subject" || k === "region" ? "asc" : "desc" })}>
         {children}<span className="text-[10px]">{active ? (f.dir === "asc" ? "▲" : "▼") : "↕"}</span>
       </button>{extra}
@@ -233,9 +233,9 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   <th>Категория</th>
                   <SortTh k="region" f={f} set={set}>Регион</SortTh>
                   <th>Ед.</th>
-                  <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear} без НДС</SortTh>
-                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear} без НДС</SortTh>
-                  <th className="text-right">Прогноз {targetYear} с НДС</th>
+                  <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
+                  <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
+                  <th className="whitespace-nowrap text-right">С НДС</th>
                   <th><span className="sr-only">Статус</span></th>
                   <th />
                 </tr>

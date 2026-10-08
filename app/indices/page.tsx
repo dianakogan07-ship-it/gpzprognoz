@@ -425,53 +425,6 @@ export default function IndicesPage() {
         )}
       </div>
 
-      {coverage && coverage.total > 0 && (
-        <div className="card py-4">
-          <p className="text-sm font-semibold text-slate-900">Покрытие прогноза</p>
-          <p className="mt-1 text-sm text-slate-700">
-            Из {coverage.total} {plural(coverage.total, "позиции", "позиций", "позиций")} прогноза:{" "}
-            <b className="text-emerald-700">{coverage.industry}</b> — отраслевой индекс,{" "}
-            <b className="text-amber-700">{coverage.cpi}</b> — общая инфляция (требуют согласования),{" "}
-            <b className="text-red-700">{coverage.none}</b> — без индекса.
-          </p>
-          <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-slate-100">
-            <div className="bg-emerald-500" style={{ width: `${(coverage.industry / coverage.total) * 100}%` }} />
-            <div className="bg-amber-400" style={{ width: `${(coverage.cpi / coverage.total) * 100}%` }} />
-            <div className="bg-red-400" style={{ width: `${(coverage.none / coverage.total) * 100}%` }} />
-          </div>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-            <p className="hint">По последнему расчёту прогноза от {new Date(coverage.at).toLocaleString("ru-RU")}.</p>
-            {(coverage.missing?.length ?? 0) > 0 && (
-              <button className="text-sm font-medium text-brand hover:underline" onClick={() => setShowMissing(!showMissing)}>
-                {showMissing ? "Скрыть список" : "Показать позиции без отраслевого индекса"}
-              </button>
-            )}
-          </div>
-          {showMissing && coverage.missing && (
-            <div className="mt-3 max-h-80 overflow-auto rounded-lg border border-slate-200">
-              <table className="tbl">
-                <thead><tr><th>Код ОКПД2</th><th>Наименование</th><th className="text-right">Позиций</th><th className="w-48" /></tr></thead>
-                <tbody>
-                  {coverage.missing.map((m) => {
-                    const added = reference ? findIndex(activeIndices.filter((i) => i.kind === "forecast" && i.year === coverage.targetYear), m.okpd2, okvedSection(m.okpd2, reference)) : null;
-                    return (
-                      <tr key={m.okpd2}>
-                        <td className="whitespace-nowrap font-medium">{m.okpd2}</td>
-                        <td>{m.name || (reference && industryName(m.okpd2.slice(0, 2), reference)) || "—"}</td>
-                        <td className="text-right">{m.positions}</td>
-                        <td className="text-right">
-                          {added ? <span className="text-xs text-emerald-700">индекс добавлен — пересчитайте прогноз</span>
-                            : canEdit && <button className="btn-sec !px-2.5 !py-1" onClick={() => { setTabKind("forecast"); setOnlyPending(false); openNew("forecast", m.okpd2); }}><IconPlus width={14} height={14} />Добавить индекс</button>}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="card space-y-4">
         {pendingTotal > 0 && (
