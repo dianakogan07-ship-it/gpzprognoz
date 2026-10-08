@@ -287,14 +287,27 @@ export default function IndicesPage() {
       </Fragment>
     );
   };
-  const renderRow = (ix: PriceIndex, nested = false) => {
+  // Рост по отраслям: раздел ОКВЭД2 (буква) → виды продукции по кодам ОКПД2 (цифры)
+  const colCount = (canEdit ? 2 : 0) + (tab.kind !== "cpi" ? 1 : 0) + (tab.kind === "to_december" ? 1 : 0) + 5;
+  const divOf = (k: string | null) => (k && /^\d{2}/.test(k) ? Number(k.slice(0, 2)) : null);
+  const sections = tabKind === "forecast" && reference
+    ? reference.okved2.map((sec) => ({
+      sec,
+      own: rows.filter((r) => r.key === sec.letter),
+      subs: rows.filter((r) => { const d = divOf(r.key); return d != null && d >= sec.div_from && d <= sec.div_to; })
+        .sort((a, b) => (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true })),
+    })).filter((x) => x.own.length || x.subs.length)
+    : [];
+  const placed = new Set(sections.flatMap((x) => [...x.own, ...x.subs].map((r) => r.id)));
+  const unsectioned = tabKind === "forecast" ? rows.filter((r) => !placed.has(r.id)) : [];
+  const renderRow = (ix: PriceIndex, nested = false, label?: ReactNode) => {
     const src = sourceOf(ix.source_code);
     return (
                   <tr key={ix.id} className={nested ? "bg-slate-50/60" : ""}>
                     {canEdit && <td><input type="checkbox" checked={selected.has(ix.id)} onChange={() => {
                       const s = new Set(selected); if (s.has(ix.id)) s.delete(ix.id); else s.add(ix.id); setSelected(s);
                     }} /></td>}
-                    {tab.kind !== "cpi" && <td className={nested ? "text-slate-500" : ""}>{nested ? "" : reference ? industryLabel(ix.key, reference) : ix.key}</td>}
+                    {tab.kind !== "cpi" && <td className={nested ? "text-slate-500" : ""}>{label ?? (nested ? "" : reference ? industryLabel(ix.key, reference) : ix.key)}</td>}
                     {tab.kind === "to_december" && <td>{ix.month ? MONTHS[ix.month - 1] : "—"}</td>}
                     <td>{ix.year}</td>
                     <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
@@ -513,7 +526,24 @@ export default function IndicesPage() {
               {rows.length === 0 && (
                 <tr><td colSpan={9} className="py-8 text-center text-slate-500">На этой вкладке нет индексов, ждущих проверки</td></tr>
               )}
-              {tabKind !== "to_december" ? rows.map((ix) => renderRow(ix)) : divisions.map((d) => {
+              {tabKind === "forecast" && reference ? (
+                <>
+                  {sections.map(({ sec, own, subs }) => (
+                    <Fragment key={sec.letter}>
+                      <tr className="bg-slate-100/80">
+                        <td colSpan={colCount} className="py-2 font-semibold text-slate-900">
+                          Раздел {sec.letter} — {sec.name}
+                          <span className="ml-2 text-xs font-normal text-slate-500">коды {String(sec.div_from).padStart(2, "0")}{sec.div_to !== sec.div_from ? `–${String(sec.div_to).padStart(2, "0")}` : ""}</span>
+                        </td>
+                      </tr>
+                      {own.map((ix) => renderRow(ix, false, <span className="block pl-4 text-slate-700">Весь раздел<span className="block text-xs text-slate-500">если нет индекса по коду</span></span>))}
+                      {!own.length && <tr><td colSpan={colCount} className="pl-8 text-xs text-slate-400">Индекса на весь раздел нет — позиции без своего кода посчитаются по общей инфляции</td></tr>}
+                      {subs.map((ix) => renderRow(ix, false, <span className="block pl-4">{industryLabel(ix.key, reference)}</span>))}
+                    </Fragment>
+                  ))}
+                  {unsectioned.map((ix) => renderRow(ix))}
+                </>
+              ) : tabKind !== "to_december" ? rows.map((ix) => renderRow(ix)) : divisions.map((d) => {
                 // Один код в разделе — без лишнего уровня
                 if (d.groups.length === 1) return renderGroup(d.groups[0], 0, reference ? industryLabel(d.groups[0].key, reference) : d.groups[0].key);
                 const all = d.groups.flatMap((g) => g.items);
