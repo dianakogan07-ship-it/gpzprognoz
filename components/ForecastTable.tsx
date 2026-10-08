@@ -44,17 +44,12 @@ export function Steps({ v, baseYear, sources }: { v: ViewRow; baseYear: number; 
     <div className="space-y-3 text-sm">
       <p className="leading-relaxed text-slate-700">
         <b>{n} {plural(n, "договор", "договора", "договоров")} {baseYear} года:</b> {prices} ₽ за {r.unitLabel}, медиана {fmtRub(r.rawMedian)}
-        <Arrow />доведение до декабря: {dec}
+        <Arrow />пересчёт до последнего месяца с данными: {dec}
         <Arrow />рост {fmtGrowth(v.growth)} ({idx}{src && <>, <a className="text-brand hover:underline" href={src.url} target="_blank" rel="noreferrer">{src.name}</a></>})
         <Arrow /><b className="text-slate-900">прогноз {fmtRub(r.forecastPrice)}</b>
       </p>
       <div className="grid gap-3 md:grid-cols-2">
-        <div>
-          <p className="font-medium text-slate-900">Статус «{STATUS_LABEL[v.status]}»</p>
-          {v.reasons.length ? <ul className="mt-1 list-disc space-y-0.5 pl-5 text-slate-600">{v.reasons.map((x) => <li key={x}>{REASON_TEXT[x]}</li>)}</ul>
-            : <p className="mt-1 text-slate-600">Отраслевой утверждённый индекс, не меньше трёх договоров.</p>}
-          {r.repeatable === false && <p className="mt-1 text-slate-600">Разовая закупка — цена справочная.</p>}
-        </div>
+        {r.repeatable === false && <p className="text-slate-600">Разовая закупка — цена справочная.</p>}
         {r.outlierPrices.length > 0 && (
           <div>
             <p className="font-medium text-slate-900">Не вошли в медиану (отличаются больше чем в 2 раза)</p>
@@ -114,7 +109,7 @@ export function useForecastFilters() {
 export type ForecastFilters = ReturnType<typeof useForecastFilters>;
 
 /** Таблица позиций прогноза: фильтры, сортировка, раскрытие строки, выгрузка текущей выборки */
-export function ForecastTable({ view, filters, baseYear, targetYear, sources, onExport, onEdit, rowDetails, showMeta }: {
+export function ForecastTable({ view, filters, baseYear, targetYear, sources, onExport, onEdit, onReview, rowDetails, showMeta }: {
   view: ViewRow[];
   filters: ForecastFilters;
   baseYear: number;
@@ -122,6 +117,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   sources: Source[];
   onExport: (rows: ViewRow[]) => void;
   onEdit?: (v: ViewRow) => void;
+  /** Смена статуса строки: «Проверить» / «Утверждено» */
+  onReview?: (v: ViewRow, approved: boolean) => void;
   rowDetails?: (v: ViewRow) => ReactNode;
   /** Сохранённый прогноз: фильтры по отметкам проверки и правкам */
   showMeta?: boolean;
@@ -149,7 +146,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   const regionLabel = (k: string) => counts.reg.get(k)?.label ?? k;
   const chips: { key: string; label: string; remove: () => void }[] = [
     ...(f.q ? [{ key: "q", label: `Поиск: «${f.q}»`, remove: () => { setQInput(""); set({ q: "" }); } }] : []),
-    ...f.status.map((s) => ({ key: `st${s}`, label: STATUS_LABEL[s], remove: () => set({ status: f.status.filter((x) => x !== s) }) })),
+    ...f.status.map((s) => ({ key: `st${s}`, label: APPROVAL_LABEL[s], remove: () => set({ status: f.status.filter((x) => x !== s) }) })),
     ...f.category.map((c) => ({ key: `c${c}`, label: c || "Без категории", remove: () => set({ category: f.category.filter((x) => x !== c) }) })),
     ...f.method.map((c) => ({ key: `m${c}`, label: c || "Способ не указан", remove: () => set({ method: f.method.filter((x) => x !== c) }) })),
     ...f.region.map((c) => ({ key: `r${c}`, label: regionLabel(c), remove: () => set({ region: f.region.filter((x) => x !== c) }) })),
@@ -168,7 +165,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
     + (f.okpd ? 1 : 0) + (f.growthMin != null || f.growthMax != null ? 1 : 0);
   const toggleRow = (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const hasMethods = counts.method.size > 1 || !counts.method.has("");
-  const cols = 10;
+  const cols = 11;
 
   return (
     <>
@@ -187,7 +184,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
               <MultiSelect label="Регион" searchable value={f.region} onChange={(region) => set({ region })}
                 options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
               <MultiSelect label="Статус" value={f.status} onChange={(v) => set({ status: v as Status[] })}
-                options={(Object.keys(STATUS_LABEL) as Status[]).map((s) => ({ value: s, label: STATUS_LABEL[s], count: counts.status[s] }))} />
+                options={(["check", "reliable"] as Status[]).map((s) => ({ value: s, label: APPROVAL_LABEL[s], count: counts.status[s] }))} />
               <button type="button" aria-expanded={more} onClick={() => setMore(!more)}
                 className={`rounded-lg border px-3 py-1.5 text-sm ${more || moreCount ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-700 hover:bg-slate-50"}`}>
                 Ещё фильтры{moreCount ? ` (${moreCount})` : ""} <span className={`inline-block transition ${more ? "rotate-180" : ""}`}>▾</span>
@@ -224,8 +221,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             )}
 
             {/* Таблица */}
-            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[980px]">
-              <colgroup><col className="w-8" /><col /><col className="w-40" /><col className="w-36" /><col className="w-14" /><col className="w-32" /><col className="w-36" /><col className="w-32" /><col className="w-10" /><col className="w-20" /></colgroup>
+            <div className="overflow-x-auto"><table className="tbl table-fixed min-w-[1180px]">
+              <colgroup><col className="w-8" /><col /><col className="w-28" /><col className="w-28" /><col className="w-12" /><col className="w-24" /><col className="w-28" /><col className="w-24" /><col className="w-32" /><col className="w-44" /><col className="w-16" /></colgroup>
               <thead>
                 <tr>
                   <th />
@@ -236,7 +233,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
                   <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
                   <th className="whitespace-nowrap text-right">С НДС</th>
-                  <th><span className="sr-only">Статус</span></th>
+                  <th>Статус</th>
+                  <th>Комментарий</th>
                   <th />
                 </tr>
               </thead>
@@ -253,7 +251,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                       <tr className={`group cursor-pointer ${open ? "bg-brand-light/40" : ""}`} onClick={() => toggleRow(v.id)}>
                         <td className="text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
                         <td className="break-words text-slate-900">{r.subject}</td>
-                        <td className="break-words text-slate-700">{r.category ?? <span className="text-slate-400">—</span>}</td>
+                        <td className="hyphens-auto text-slate-700" lang="ru">{r.category ?? <span className="text-slate-400">—</span>}</td>
                         <td className="break-words text-slate-700">{r.regionName ?? r.region ?? "—"}</td>
                         <td className="text-slate-700">{r.unitLabel}</td>
                         <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
@@ -265,7 +263,11 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                           <div className="whitespace-nowrap text-slate-900">{fmtRub(Math.round(r.forecastPrice * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100)}</div>
                           <div className="text-xs text-slate-400">НДС {Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %{r.vatRate == null ? "*" : ""}</div>
                         </td>
-                        <td className="text-center"><StatusDot v={v} hidden={hint?.reason ?? null} /></td>
+                        <td onClick={(e) => e.stopPropagation()}><StatusPick v={v} onChange={onReview} /></td>
+                        <td className="text-xs leading-snug text-slate-600">
+                          {v.reasons.map((x) => <p key={x}>{REASON_TEXT[x]}</p>)}
+                          {v.meta?.edited && <p className="text-brand">Есть ручные правки</p>}
+                        </td>
                         <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
                           {onEdit && (
                             <button type="button" title="Изменить" aria-label="Изменить" onClick={() => onEdit(v)}
@@ -302,22 +304,41 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   );
 }
 
-const DOT: Record<Status, string> = { reliable: "bg-emerald-500", check: "bg-amber-500", lowdata: "bg-slate-400" };
+export const APPROVAL_LABEL: Record<Status, string> = { check: "Проверить", reliable: "Утверждено", lowdata: "Проверить" };
+const PILL: Record<"check" | "reliable", string> = { check: "bg-amber-500", reliable: "bg-emerald-600" };
 
-/** Статус строки — цветная точка, подробности во всплывающей подсказке */
-function StatusDot({ v, hidden }: { v: ViewRow; hidden: ReasonCode | null }) {
-  const reasons = v.reasons.filter((r) => r !== hidden);
-  const lines = [
-    STATUS_LABEL[v.status],
-    ...(reasons.length ? reasons.map((r) => `• ${REASON_TEXT[r]}`) : ["Отраслевой утверждённый индекс, не меньше трёх договоров"]),
-    ...(v.meta?.needsReview ? [v.meta.reviewed ? "✓ Проверено" : "Нужно согласовать"] : []),
-    ...(v.meta?.edited ? ["Есть ручные правки"] : []),
-  ];
+/** Статус строки: цветная плашка с выбором «Проверить» / «Утверждено» */
+function StatusPick({ v, onChange }: { v: ViewRow; onChange?: (v: ViewRow, approved: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const cur = v.status === "reliable" ? "reliable" : "check";
+  const pill = <span className={`inline-flex items-center gap-1 whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold text-white ${PILL[cur]}`}>{cur === "reliable" ? "✓ " : ""}{APPROVAL_LABEL[cur]}</span>;
+  if (!onChange) return pill;
   return (
-    <span title={lines.join("\n")} aria-label={STATUS_LABEL[v.status]} className="relative inline-flex cursor-help p-1">
-      <span className={`h-2.5 w-2.5 rounded-full ${DOT[v.status]}`} />
-      {v.meta?.edited && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-brand" />}
-    </span>
+    <div className="relative inline-block" ref={ref}>
+      <button type="button" className="inline-flex items-center gap-1" onClick={() => setOpen(!open)} aria-label="Сменить статус">
+        {pill}<span className="text-xs text-slate-400">⌄</span>
+      </button>
+      {open && (
+        <ul className="absolute left-0 z-30 mt-1 w-44 rounded-lg border border-slate-200 bg-white py-1 text-sm shadow-lg">
+          {(["check", "reliable"] as const).map((k) => (
+            <li key={k}>
+              <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50"
+                onClick={() => { setOpen(false); if (k !== cur) onChange(v, k === "reliable"); }}>
+                <span className={`h-2.5 w-2.5 rounded-full ${PILL[k]}`} />{APPROVAL_LABEL[k]}
+                {k === cur && <span className="ml-auto text-brand">✓</span>}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

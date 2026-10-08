@@ -99,7 +99,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
   }, [versionId, f]);
 
   // Категория из ГПЗ, а если её нет — из справочника кодов WS
-  const view = useMemo(() => (data ? toViewRows(data.rows.map((r) => (r.category || !r.ws ? r : { ...r, category: reference?.ws.find((w) => w.code === r.ws)?.category ?? null })), data.metas) : []), [data, reference]);
+  const view = useMemo(() => (data ? toViewRows(data.rows.map((r) => (r.category || !r.ws ? r : { ...r, category: reference?.ws.find((w) => w.code === r.ws)?.category ?? null })), data.metas).map((v) => ({ ...v, status: v.meta?.reviewed ? "reliable" as const : "check" as const })) : []), [data, reference]);
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!f || !data || !versionId) return <p className="hint">Загрузка…</p>;
 
@@ -116,8 +116,8 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
     setBusy(false);
   }
   const status = (to: ForecastStatus, done: string) => act(async () => { await api(`/api/forecasts/${id}/status`, "POST", { to }); await load(); }, done);
-  const toggleReviewed = (v: ViewRow) => act(async () => {
-    const r = await api(`/api/forecasts/${id}/items/${v.meta!.itemId}`, "PATCH", { field: "reviewed", value: !v.meta!.reviewed, reason: v.meta!.reviewed ? "Снята отметка проверки" : "Проверено" });
+  const setReviewed = (v: ViewRow, approved: boolean) => act(async () => {
+    const r = await api(`/api/forecasts/${id}/items/${v.meta!.itemId}`, "PATCH", { field: "reviewed", value: approved, reason: approved ? "Статус «Утверждено»" : "Статус «Проверить»" });
     await load(r.newVersion?.versionId);
     if (r.newVersion) setMsg(`Версия была утверждена — изменения сохранены в новой версии v${r.newVersion.number}`);
   });
@@ -188,13 +188,9 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
       <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
         onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")}
         onEdit={editable ? setEditing : undefined}
+        onReview={editable ? setReviewed : undefined}
         rowDetails={(v) => (
           <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
-            {editable && v.meta?.needsReview && (
-              <button className={`hover:underline ${v.meta.reviewed ? "text-emerald-700" : "text-amber-700"}`} disabled={busy} onClick={() => toggleReviewed(v)}>
-                {v.meta.reviewed ? "✓ Проверено — снять отметку" : "Отметить как проверенное"}
-              </button>
-            )}
             <Link href={`/forecasts/${id}/history?okpd=${encodeURIComponent(v.row.okpd2)}`} className="text-brand hover:underline">История изменений позиции</Link>
           </div>
         )} />
