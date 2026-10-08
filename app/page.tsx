@@ -59,7 +59,12 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
           <button className="self-start rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
             onClick={(e) => { e.stopPropagation(); onAction(c, "recalc"); }}>Новые индексы — пересчитать?</button>
         )}
-        <p className="font-semibold text-slate-900">Прогноз на {c.year} год</p>
+        <p className="flex items-center gap-2 font-semibold text-slate-900">Прогноз на {c.year} год
+          {s.needsReview > s.reviewed && (
+            <span title="Есть позиции для подтверждения" aria-label="Есть позиции для подтверждения"
+              className="flex h-5 w-5 cursor-help items-center justify-center rounded-full bg-amber-100 text-xs font-bold text-amber-700">!</span>
+          )}
+        </p>
         <div className="grid grid-cols-2 gap-2">
           <Tile value={pctSigned(s.growth)} label="рост цен" tone={s.growth < 0 ? "text-red-700" : undefined} />
           <Tile value={`${money.value}${NBSP}${money.unit === "млн" ? "млн" : "тыс."}${NBSP}₽`} label="сумма цен позиций"
@@ -68,13 +73,6 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
             href={`/forecasts/${c.id}?group=subject`} />
           <Tile value={s.categories ? numRu(s.categories) : "—"} label={plural(s.categories ?? 0, "категория", "категории", "категорий")}
             href={`/forecasts/${c.id}?group=category`} title={s.categories ? undefined : "В файлах нет категорий"} />
-        </div>
-        <div className="mt-auto flex items-center gap-2">
-          <Link href={`/forecasts/${c.id}`} className="btn-sec !py-1.5" onClick={(e) => e.stopPropagation()}>Открыть прогноз</Link>
-          {s.needsReview > s.reviewed && (
-            <span title="Есть позиции для подтверждения" aria-label="Есть позиции для подтверждения"
-              className="flex h-6 w-6 cursor-help items-center justify-center rounded-full bg-amber-100 text-sm font-bold text-amber-700">!</span>
-          )}
         </div>
       </div>
     </div>
