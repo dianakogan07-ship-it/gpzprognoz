@@ -3,6 +3,11 @@ import Link from "next/link";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IconDownload, IconEdit, IconHelp } from "./Icons";
 import { DEFAULT_VAT } from "@/lib/logic";
+import { avgGrowth } from "@/lib/report";
+import { Modal } from "./Modal";
+import type { ForecastRow } from "@/lib/forecast";
+
+const withVat = (r: ForecastRow) => Math.round(r.forecastPrice * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100;
 import { Chip, MultiSelect } from "./MultiSelect";
 import {
   CONTRACTS_LABEL, EMPTY_FILTERS, FLAG_LABEL, REASON_TEXT, REPEAT_LABEL, SOURCE_LABEL, STATUS_LABEL,
@@ -124,7 +129,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   showMeta?: boolean;
 }) {
   const { f, set, qInput, setQInput, gMin, setGMin, gMax, setGMax, resetAll } = filters;
-  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [limit, setLimit] = useState(PAGE);
   const [more, setMore] = useState(false);
   useEffect(() => setLimit(PAGE), [f]);
@@ -163,7 +168,15 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   // Сколько фильтров включено в «Ещё фильтры»
   const moreCount = f.method.length + f.source.length + f.contracts.length + f.repeat.length + f.flags.length
     + (f.okpd ? 1 : 0) + (f.growthMin != null || f.growthMax != null ? 1 : 0);
-  const toggleRow = (id: number) => setExpanded((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  // Позиция → регионы: строки одного предмета закупки под одной строкой-заголовком
+  const groups = useMemo(() => {
+    const m = new Map<string, ViewRow[]>();
+    for (const v of filtered) { const k = v.row.subject; m.get(k)?.push(v) ?? m.set(k, [v]); }
+    return [...m.entries()].map(([key, items]) => ({ key, items }));
+  }, [filtered]);
+  const toggleGroup = (k: string) => setExpanded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  const allOpen = groups.length > 0 && groups.every((g) => expanded.has(g.key));
+  const [card, setCard] = useState<ViewRow | null>(null);
   const hasMethods = counts.method.size > 1 || !counts.method.has("");
   const cols = 11;
 
@@ -221,84 +234,124 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             )}
 
             {/* Таблица */}
-            <div className="overflow-x-auto"><table className="tbl min-w-[1100px]">
-              
+            <div className="flex justify-end">
+              <button type="button" className="text-sm text-brand hover:underline" onClick={() => setExpanded(allOpen ? new Set() : new Set(groups.map((g) => g.key)))}>
+                {allOpen ? "Свернуть все" : "Развернуть все"}
+              </button>
+            </div>
+            <div className="overflow-x-auto"><table className="tbl min-w-[760px]">
               <thead>
                 <tr>
-                  <th />
-                  <SortTh k="subject" f={f} set={set}>Предмет</SortTh>
-                  <th>Категория</th>
-                  <SortTh k="region" f={f} set={set}>Регион</SortTh>
+                  <th className="w-6" />
+                  <SortTh k="subject" f={f} set={set}>Позиция / регион</SortTh>
                   <th>Ед.</th>
                   <SortTh k="price" f={f} set={set} right extra={<PriceInfo />}>Цена {baseYear}</SortTh>
                   <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear}</SortTh>
                   <th className="whitespace-nowrap text-right">С НДС</th>
                   <th>Статус</th>
-                  <th>Комментарий</th>
                   <th />
                 </tr>
               </thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={cols} className="py-10 text-center text-slate-500">
+                  <tr><td colSpan={8} className="py-10 text-center text-slate-500">
                     Нет позиций по выбранным фильтрам. <button className="text-brand hover:underline" onClick={resetAll}>Сбросить всё</button>
                   </td></tr>
                 )}
-                {filtered.slice(0, limit).map((v) => {
-                  const r = v.row, open = expanded.has(v.id);
+                {groups.slice(0, limit).map((g) => {
+                  const open = expanded.has(g.key);
+                  const rs = g.items.map((v) => v.row);
+                  const growth = avgGrowth(rs);
+                  const toCheck = g.items.filter((v) => v.status !== "reliable").length;
+                  const prices = rs.map((r) => r.forecastPrice);
+                  const units = [...new Set(rs.map((r) => r.unitLabel))];
                   return (
-                    <Fragment key={v.id}>
-                      <tr className={`group cursor-pointer ${open ? "bg-brand-light/40" : ""}`} onClick={() => toggleRow(v.id)}>
-                        <td className="w-6 text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
-                        <td className="min-w-[11rem] break-words text-slate-900">{r.subject}</td>
-                        <td className="min-w-[7rem] max-w-[11rem] hyphens-auto text-slate-700" lang="ru">{r.category ?? <span className="text-slate-400">—</span>}</td>
-                        <td className="min-w-[7rem] max-w-[10rem] break-words text-slate-700">{r.regionName ?? r.region ?? "—"}</td>
-                        <td className="text-slate-700">{r.unitLabel}</td>
-                        <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
-                        <td className="text-right">
-                          <div className="whitespace-nowrap text-base font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</div>
-                          <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
+                    <Fragment key={g.key}>
+                      <tr className="cursor-pointer bg-slate-50/70 hover:bg-slate-100/70" onClick={() => toggleGroup(g.key)}>
+                        <td className="text-slate-400"><span className={`inline-block transition ${open ? "rotate-90" : ""}`}>›</span></td>
+                        <td>
+                          <span className="font-semibold text-slate-900">{g.key}</span>
+                          <span className="ml-2 text-xs text-slate-500">{g.items.length} {plural(g.items.length, "регион", "региона", "регионов")}{g.items[0].row.category ? ` · ${g.items[0].row.category}` : ""}</span>
                         </td>
-                        <td className="text-right" title={r.vatRate == null ? "Ставки НДС нет в файлах — взята 22 %" : undefined}>
-                          <div className="whitespace-nowrap text-slate-900">{fmtRub(Math.round(r.forecastPrice * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100)}</div>
-                          <div className="text-xs text-slate-400">НДС {Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %{r.vatRate == null ? "*" : ""}</div>
+                        <td className="whitespace-nowrap text-slate-600">{units.length === 1 ? units[0] : ""}</td>
+                        <td />
+                        <td className="whitespace-nowrap text-right">
+                          {units.length === 1 && <div className="text-slate-700">{prices.length > 1 ? `${fmtRub(Math.min(...prices))} – ${fmtRub(Math.max(...prices))}` : fmtRub(prices[0])}</div>}
+                          <div className={`text-xs ${growth < 0 ? "text-red-600" : "text-slate-500"}`}>рост {fmtGrowth(Math.round(growth * 10) / 10)}</div>
                         </td>
-                        <td onClick={(e) => e.stopPropagation()}><StatusPick v={v} onChange={onReview} /></td>
-                        <td className="min-w-[13rem] max-w-[16rem] text-xs leading-snug text-slate-600">
-                          {v.reasons.map((x) => <p key={x}>{REASON_TEXT[x]}</p>)}
-                          {v.meta?.edited && <p className="text-brand">Есть ручные правки</p>}
-                        </td>
-                        <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
-                          {onEdit && (
-                            <button type="button" title="Изменить" aria-label="Изменить" onClick={() => onEdit(v)}
-                              className="rounded-lg p-1.5 text-slate-500 opacity-0 transition hover:bg-slate-100 hover:text-brand focus:opacity-100 group-hover:opacity-100">
-                              <IconEdit width={16} height={16} />
-                            </button>
-                          )}
-                          {v.meta && (
-                            <Link href={`/logic?row=${v.meta.itemId}`} title="Как посчитано" aria-label="Как посчитано"
-                              className="inline-flex rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-brand">
-                              <IconHelp width={16} height={16} />
-                            </Link>
-                          )}
-                        </td>
+                        <td />
+                        <td className="whitespace-nowrap text-xs">{toCheck ? <span className="font-medium text-amber-700">Проверить: {toCheck}</span> : <span className="font-medium text-emerald-700">✓ Утверждено</span>}</td>
+                        <td />
                       </tr>
-                      {open && (
-                        <tr className="bg-brand-light/40"><td /><td colSpan={cols - 1} className="pb-4">
-                          <p className="mb-2 text-xs text-slate-500">
-                            ОКПД2 {r.okpd2}{r.category ? ` · ${r.category}` : ""} · по {r.contracts} {plural(r.contracts, "договору", "договорам", "договорам")}
-                          </p>
-                          <Steps v={v} baseYear={baseYear} sources={sources} />{rowDetails?.(v)}
-                        </td></tr>
-                      )}
+                      {open && g.items.map((v) => {
+                        const r = v.row;
+                        return (
+                          <tr key={v.id} className="group cursor-pointer hover:bg-brand-light/30" onClick={() => setCard(v)}>
+                            <td />
+                            <td className="pl-6 text-slate-700">
+                              {r.regionName ?? r.region ?? "Регион не указан"}
+                              {(v.reasons.length > 0 || v.meta?.edited) && <span title="Есть замечания — откройте карточку" className="ml-1.5 text-amber-600">•</span>}
+                            </td>
+                            <td className="whitespace-nowrap text-slate-700">{r.unitLabel}</td>
+                            <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
+                            <td className="text-right">
+                              <div className="whitespace-nowrap font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</div>
+                              <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
+                            </td>
+                            <td className="whitespace-nowrap text-right" title={r.vatRate == null ? "Ставки НДС нет в файлах — взята 22 %" : undefined}>
+                              <div className="text-slate-900">{fmtRub(withVat(r))}</div>
+                              <div className="text-xs text-slate-400">НДС {Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %{r.vatRate == null ? "*" : ""}</div>
+                            </td>
+                            <td onClick={(e) => e.stopPropagation()}><StatusPick v={v} onChange={onReview} /></td>
+                            <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
+                              {onEdit && (
+                                <button type="button" title="Изменить" aria-label="Изменить" onClick={() => onEdit(v)}
+                                  className="rounded-lg p-1.5 text-slate-500 opacity-0 transition hover:bg-slate-100 hover:text-brand focus:opacity-100 group-hover:opacity-100">
+                                  <IconEdit width={16} height={16} />
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </Fragment>
                   );
                 })}
               </tbody>
             </table></div>
-            {filtered.length > limit && (
-              <div className="text-center"><button className="btn-sec" onClick={() => setLimit(limit + PAGE)}>Показать ещё {Math.min(PAGE, filtered.length - limit)} из {filtered.length - limit}</button></div>
+            {groups.length > limit && (
+              <div className="text-center"><button className="btn-sec" onClick={() => setLimit(limit + PAGE)}>Показать ещё {Math.min(PAGE, groups.length - limit)} из {groups.length - limit}</button></div>
             )}
+      {card && (
+        <Modal wide title={card.row.subject} subtitle={[card.row.regionName ?? card.row.region, `ОКПД2 ${card.row.okpd2}`, card.row.category].filter(Boolean).join(" · ")} onClose={() => setCard(null)}
+          footer={<>
+            {card.meta && <Link href={`/logic?row=${card.meta.itemId}`} className="mr-auto self-center text-sm text-brand hover:underline">Как посчитано по шагам →</Link>}
+            {onEdit && <button className="btn-sec" onClick={() => { const v = card; setCard(null); onEdit(v); }}><IconEdit width={16} height={16} />Изменить цену</button>}
+            <button className="btn" onClick={() => setCard(null)}>Закрыть</button>
+          </>}>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {([[`Цена ${baseYear}`, fmtRub(card.row.basePrice)], [`Прогноз ${targetYear}`, fmtRub(card.row.forecastPrice)], ["С НДС", fmtRub(withVat(card.row))], ["Рост", fmtGrowth(card.growth)]] as const).map(([l, val]) => (
+              <div key={l} className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">{l}</p><p className="font-semibold text-slate-900">{val}</p></div>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500">за {card.row.unitLabel} · по {card.row.contracts} {plural(card.row.contracts, "договору", "договорам", "договорам")} {baseYear} года</p>
+          <Steps v={card} baseYear={baseYear} sources={sources} />
+          {(card.reasons.length > 0 || card.meta?.edited) && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              <p className="font-medium">Обратите внимание</p>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5">
+                {card.reasons.map((x) => <li key={x}>{REASON_TEXT[x]}</li>)}
+                {card.meta?.edited && <li>Цена изменена вручную</li>}
+              </ul>
+            </div>
+          )}
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="text-slate-600">Статус:</span>
+            <StatusPick v={card} onChange={onReview ? (v, ok) => { setCard(null); onReview(v, ok); } : undefined} />
+          </div>
+          {rowDetails?.(card)}
+        </Modal>
+      )}
       </div>
     </>
   );
