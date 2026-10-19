@@ -12,6 +12,7 @@ import { findIndex, okvedSection } from "@/lib/forecast";
 import { isActiveIndex } from "@/lib/types";
 import { MerImportButton } from "@/components/MerImport";
 import { RosstatImportButton } from "@/components/RosstatImport";
+import { MinstroyHowTo, MinstroyImportButton } from "@/components/MinstroyImport";
 import { DATA_LINKS, DATA_LINKS_HINT } from "@/lib/sources";
 import { lastDataMonth } from "@/lib/logic";
 
@@ -403,6 +404,13 @@ export default function IndicesPage() {
     setOnlyPending(true);
   }
 
+  async function afterMinstroy(m: string) {
+    setNotice(m);
+    await reload();
+    setTabKind("minstroy");
+    setOnlyPending(true);
+  }
+
   async function afterRosstat(m: string) {
     setNotice(m);
     await reload();
@@ -430,6 +438,7 @@ export default function IndicesPage() {
           <div className="flex flex-wrap items-center gap-2">
             {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
             {canEdit && reference && <RosstatImportButton reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />}
+            {canEdit && reference && <MinstroyImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMinstroy} />}
             {canEdit && <UploadButton busy={busy} onFile={upload} />}
             <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
           </div>
@@ -532,6 +541,7 @@ export default function IndicesPage() {
             </div>
           )}
         </div>
+        {tabKind === "minstroy" && <MinstroyHowTo />}
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
 
         {rows.length === 0 && !onlyPending ? (
@@ -543,6 +553,7 @@ export default function IndicesPage() {
               <div className="mt-4 flex flex-wrap justify-center gap-2">
                 <button className="btn" onClick={() => openNew()}><IconPlus width={16} height={16} />Добавить</button>
                 {tabKind !== "to_december" && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
+                {tabKind === "minstroy" && reference && <MinstroyImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMinstroy} />}
                 {tabKind === "to_december" && reference && <RosstatImportButton reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />}
                 <UploadButton busy={busy} onFile={upload} />
               </div>
