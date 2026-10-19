@@ -83,7 +83,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
       XLSX.utils.book_append_sheet(wb, ws, name);
     };
     const p1 = (v: number) => Math.round(v * 10) / 10;
-    const head = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}${approved ? "" : ". Прогноз не утверждён"}`], []];
+    const head = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Расчёт по базовому сценарию МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
     add("Сводка", [...head,
       ["Показатель", "Значение", "Ед."],
       [`Средний рост цен в ${year}`, p1(total.total), "%"],
@@ -171,7 +171,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
             <div>
               <h2 className="text-xl font-semibold">Прогноз цен {year}</h2>
               <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>
-                {title} · {sliceText} · база: договоры {baseYear}, цены без НДС{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""}
+                {title} · {sliceText} · база: договоры {baseYear}, цены без НДС · расчёт по базовому сценарию МЭР{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""}
               </p>
               {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
             </div>
