@@ -7,7 +7,7 @@ export type Status = "reliable" | "check" | "lowdata";
 export const STATUS_LABEL: Record<Status, string> = { reliable: "Надёжно", check: "Проверить", lowdata: "Мало данных" };
 
 export type ReasonCode = "cpi" | "no_index" | "unapproved" | "not_december" | "repeat_unknown" | "few_contracts"
-  | "vat_file" | "later_year" | "long" | "ds" | "active" | "months" | "lot" | "okpd_short";
+  | "vat_file" | "later_year" | "long" | "ds" | "active" | "months" | "lot" | "okpd_short" | "negative_index" | "okato_fixed" | "apportioned";
 export const REASON_TEXT: Record<ReasonCode, string> = {
   cpi: "Отраслевой индекс не найден — применена общая инфляция",
   no_index: "Нет ни отраслевого индекса, ни общей инфляции — цена не пересчитана на следующий год",
@@ -23,6 +23,9 @@ export const REASON_TEXT: Record<ReasonCode, string> = {
   months: "Количество месяцев в ГПЗ не совпадает со сроком договора — цена за месяц может быть неверной",
   lot: "Цена за весь лот (количество 1) — не сравнивается между регионами",
   okpd_short: "ОКПД2 указан только классом (две цифры) — проверьте код в ГПЗ",
+  negative_index: "Отраслевой индекс МЭР отрицательный — закупка не дешевеет: в цену работ входят зарплаты и расходы исполнителя, взята общая инфляция",
+  okato_fixed: "Код ОКАТО в ГПЗ неверный — регион взят по названию",
+  apportioned: "Договор заходит на следующий год — стоимость поделена по годам, месяцы следующего года учтены по новой цене",
 };
 
 /** Подробности причины по строке: «0 %», «+17 %», «12 мес. в ГПЗ, 18 мес. по договору» */
@@ -33,6 +36,9 @@ export function reasonDetail(r: ForecastRow, code: ReasonCode): string | null {
   if (code === "long" && r.longContracts) return `договоров: ${r.longContracts}`;
   if (code === "ds" && r.dsUp?.length) return `рост к предложению победителя: ${r.dsUp.map(pct).join(", ")}`;
   if (code === "active" && r.activeTarget) return `договоров: ${r.activeTarget}`;
+  if (code === "negative_index" && r.indexFloored != null) return `индекс ${pct(r.indexFloored - 1)} → взято ${pct(r.forecastIndex - 1)}`;
+  if (code === "okato_fixed" && r.regionFixed) return `договоров: ${r.regionFixed}`;
+  if (code === "apportioned" && r.apportioned) return `договоров: ${r.apportioned}`;
   if (code === "months" && r.monthMismatch?.length) return r.monthMismatch.map(([g, m]) => `${g} мес. в ГПЗ, ${m} мес. по договору`).join("; ");
   return null;
 }
@@ -52,6 +58,9 @@ export function reasonsOf(r: ForecastRow): ReasonCode[] {
   if (r.monthMismatch?.length) out.push("months");
   if (r.lotPrice) out.push("lot");
   if (/^\d{2}$/.test(r.okpd2)) out.push("okpd_short");
+  if (r.indexFloored != null) out.push("negative_index");
+  if (r.regionFixed) out.push("okato_fixed");
+  if (r.apportioned) out.push("apportioned");
   return out;
 }
 

@@ -38,16 +38,22 @@ export function regionByName(name: string | null, regions: { code: string; name:
   return best?.code ?? null;
 }
 
-/** Регион строки: код ОКАТО сверяется с названием региона из соседней колонки. Расхождение или неизвестный код — ошибка */
-export function resolveRegion(v: unknown, name: string | null, regions: { code: string; name: string }[]): { code: string | null; error: string | null } {
+/**
+ * Регион строки: код ОКАТО сверяется с названием региона из соседней колонки.
+ * Код неизвестен или не совпадает с названием, но название узнаётся — регион берётся по названию с пометкой;
+ * ни код, ни название не узнаются — ошибка, строка не входит в расчёт
+ */
+export function resolveRegion(v: unknown, name: string | null, regions: { code: string; name: string }[]): { code: string | null; error: string | null; note: string | null } {
   const raw = v == null ? "" : String(v).replace(/\D/g, "");
-  if (!raw) return { code: null, error: null };
+  const byName = regionByName(name, regions);
+  if (!raw) return { code: byName, error: null, note: null };
   const code = normRegion(raw, regions.map((r) => r.code));
   const nameOf = (c: string) => regions.find((r) => r.code === c)?.name ?? c;
-  if (!code) return { code: null, error: `Код ОКАТО ${raw} не найден в справочнике регионов${name ? ` (в файле: «${name}»)` : ""}` };
-  const byName = regionByName(name, regions);
-  if (byName && byName !== code) return { code: null, error: `Код ОКАТО ${raw} (${nameOf(code)}) не совпадает с регионом «${name}»` };
-  return { code, error: null };
+  if (!code) return byName
+    ? { code: byName, error: null, note: `Код ОКАТО ${raw} нет в справочнике — регион взят по названию «${name}»` }
+    : { code: null, error: `Код ОКАТО ${raw} не найден в справочнике регионов${name ? `, название «${name}» тоже не распознано` : ""}`, note: null };
+  if (byName && byName !== code) return { code: byName, error: null, note: `Код ОКАТО ${raw} (${nameOf(code)}) не совпадает с регионом «${name}» — взят регион по названию` };
+  return { code, error: null, note: null };
 }
 
 export function normWs(v: unknown): string | null {

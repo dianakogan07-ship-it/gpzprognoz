@@ -35,6 +35,12 @@ export interface ForecastRow {
   forecastIndexCons?: number;
   /** Валюта договоров группы (USD, EUR, CNY); рублёвые — пусто */
   currency?: string | null;
+  /** Отраслевой индекс был отрицательным (значение) — взята инфляция */
+  indexFloored?: number | null;
+  /** Договоров, стоимость которых поделена между базовым и следующим годом */
+  apportioned?: number;
+  /** Договоров, у которых регион взят по названию — код ОКАТО в файле неверный */
+  regionFixed?: number;
   /** Медиана НМЦ 2026 за единицу без НДС и сумма НМЦ по договорам группы — для варианта «от НМЦ» и экономии на торгах */
   nmcMedian?: number | null;
   nmcSum?: number | null;
@@ -127,19 +133,38 @@ export interface ContractPoint {
   currency?: string | null;
   /** НМЦ за единицу без НДС (начальная цена закупки) */
   nmc?: number | null;
+  /** Реестровый номер лота или ID процедуры — чтобы найти договор в файле */
+  lot?: string | null;
+  /** Начало и окончание договора, ГГГГ-ММ-ДД */
+  start?: string | null;
+  end?: string | null;
+  /** Месяцев договора в базовом году (и раньше) и после него — для деления стоимости по годам */
+  mBase?: number | null;
+  mAfter?: number | null;
+  /** Регион взят по названию: код ОКАТО в файле неверный */
+  regionFixed?: boolean;
+  /** Доля цены, относящаяся к базовому году (договор заходит на следующий год); 1 — весь договор в базовом году */
+  share?: number | null;
 }
 /** Договор в хранилище — массивом, чтобы строка не разрасталась: [цена, месяц, год, количество, срок, рост по ДС, действует в году прогноза, месяцев в ГПЗ, квартал, ставка НДС из файла, валюта] */
 export type PackedPoint = (number | string | null)[];
 export const packPoint = (p: Partial<ContractPoint> & { raw: number; month: number | null }): PackedPoint =>
-  [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null, p.currency ?? null, p.nmc ?? null];
+  [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null, p.currency ?? null, p.nmc ?? null,
+    p.lot ?? null, p.start ?? null, p.end ?? null, p.mBase ?? null, p.mAfter ?? null, p.subject || null, p.regionFixed ? 1 : 0, p.share ?? null];
 export const unpackPoint = (a: PackedPoint) => {
   const n = (i: number) => (typeof a[i] === "number" ? (a[i] as number) : null);
   return {
     raw: n(0) ?? 0, month: n(1), year: n(2), qty: n(3), months: n(4), ds: n(5),
     active: a[6] === 1, gpzMonths: n(7), quarter: n(8), vatFile: n(9), currency: typeof a[10] === "string" ? a[10] : null, nmc: n(11),
+    lot: typeof a[12] === "string" ? a[12] : null, start: typeof a[13] === "string" ? a[13] : null, end: typeof a[14] === "string" ? a[14] : null,
+    mBase: n(15), mAfter: n(16), ...(typeof a[17] === "string" ? { subject: a[17] } : {}), regionFixed: a[18] === 1, share: n(19),
   };
 };
-export interface ExcludedRow { file: "ГПЗ" | "Отчётность"; row: number; lot: string | null; reason: string }
+export interface ExcludedRow {
+  file: "ГПЗ" | "Отчётность"; row: number; lot: string | null; reason: string;
+  /** Закупка из плана без договора: НМЦ из ГПЗ без НДС и рост цен для её направления — чтобы она вошла в сумму ГПЗ */
+  plan?: { nmc: number; okpd2: string | null; category: string | null; region: string | null; subject: string; k: number };
+}
 export interface ForecastResult {
   rows: ForecastRow[]; excluded: ExcludedRow[]; newWsCodes: string[];
   stats: {
@@ -243,35 +268,51 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
   const points: ContractPoint[] = [];
   let matched = 0;
 
+  const planK = (okpd2: string | null) => {
+    const at = (kind: string) => ref.indices.filter((i) => isActiveIndex(i) && i.kind === kind && i.year === opt.targetYear);
+    const cpi = at("cpi")[0]?.value ?? 1;
+    const hit = okpd2 ? findIndex(at("forecast"), okpd2, okvedSection(okpd2, ref)) : null;
+    return Math.max(hit?.index.value ?? cpi, cpi > 1 ? cpi : 1);
+  };
   let laterYear = 0;
   const vatOther: Record<string, number> = {};
   const monthsBetween = (a: Date, b: Date) => (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth() + (b.getUTCDate() >= a.getUTCDate() ? 1 : 0);
   for (const g of gpz) {
     const rep = (g.lot && byLot.get(g.lot)) || (g.procId && byProc.get(g.procId)) || null;
-    const ex = (reason: string) => excluded.push({ file: "ГПЗ", row: g.row, lot: g.lot ?? g.procId, reason });
-    if (!rep) { ex("Нет в отчётности (договор не заключён)"); continue; }
+    // Закупка без договора: в расчёт цены не входит, но её НМЦ из ГПЗ с ростом цен попадает в сумму ГПЗ
+    const plan = () => (g.nmcNoVat && g.nmcNoVat > 0 ? {
+      nmc: g.nmcNoVat, okpd2: g.okpd2, category: g.category, region: g.region, subject: anonymize(g.subject ?? ""), k: planK(g.okpd2),
+    } : undefined);
+    const ex = (reason: string, withPlan = false) => excluded.push({ file: "ГПЗ", row: g.row, lot: g.lot ?? g.procId, reason, ...(withPlan ? { plan: plan() } : {}) });
+    if (!rep) { ex("Нет в отчётности (договор не заключён)", true); continue; }
     matched++;
     const ws = g.ws ?? rep.ws;
     if (ws && !knownWs.has(ws)) newWs.add(ws);
-    if (rep.status && NOT_CONCLUDED.test(rep.status)) { ex(`Договор не заключён: «${rep.status}»`); continue; }
-    if (rep.priceNoVat == null || rep.priceNoVat <= 0) { ex("Нет фактической цены договора"); continue; }
+    if (rep.status && NOT_CONCLUDED.test(rep.status)) { ex(`Договор не заключён: «${rep.status}»`, true); continue; }
+    if (rep.priceNoVat == null || rep.priceNoVat <= 0) { ex("Нет фактической цены договора", true); continue; }
     if (!g.okpd2) { ex("Не указан ОКПД2"); continue; }
     if (g.regionError) { ex(g.regionError); continue; }
-    const qty = rep.quantity ?? g.quantity;
+    let qty = rep.quantity ?? g.quantity;
     if (!qty || qty <= 0) { ex("Не указано количество"); continue; }
     if (!g.unit && !g.unitName) { ex("Не указана единица измерения"); continue; }
     const unit = unitLabel(g.unitName ?? g.unit, ref);
     const signed = rep.contractDate;
+    const startD = g.workStart && signed && g.workStart > signed ? g.workStart : signed;
     const end = rep.endDate ?? g.workEnd;
-    const months = signed && end && end > signed ? monthsBetween(signed, end) : null;
-    // Договор длиннее года: поставщик заложил рост цен на весь срок — дата цены — середина срока
-    let at = signed;
-    if (signed && end && months && months > 12) at = new Date((signed.getTime() + end.getTime()) / 2);
+    const months = startD && end && end > startD ? monthsBetween(startD, end) : null;
+    // Месяцы договора в базовом году (и раньше) и после него: стоимость следующего года считается по новой цене
+    const yearEnd = new Date(Date.UTC(opt.baseYear, 11, 31));
+    const mAfter = months && end && end > yearEnd ? Math.min(months, monthsBetween(new Date(Date.UTC(opt.baseYear + 1, 0, 1)), end)) : 0;
+    const mBase = months ? months - mAfter : null;
+    // Единица «месяц»: количество — срок договора, а не 12 из ГПЗ (договор на 18 месяцев — делим на 18)
+    const gpzQty = qty;
+    if (/^мес/.test(unit) && months) qty = months;
+    const at = signed;
     if (signed && signed.getUTCFullYear() > opt.baseYear) laterYear++;
     const fileVat = g.vatRate ?? rep.vatRate ?? null;
     const odd = fileVat != null && Math.abs(fileVat - DEFAULT_VAT) > 1e-9;
     if (odd) vatOther[String(Math.round(fileVat * 1000) / 10)] = (vatOther[String(Math.round(fileVat * 1000) / 10)] ?? 0) + 1;
-    const gpzMonths = /^мес/.test(unit) ? qty : null;
+    const gpzMonths = /^мес/.test(unit) ? gpzQty : null;
     points.push({
       okpd2: g.okpd2, unit, region: g.region, ws, category: g.category,
       method: g.method ?? null, subject: anonymize(g.subject ?? ""),
@@ -285,6 +326,8 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       quarter: g.quarter,
       currency: normCurrency(rep.currency),
       nmc: rep.nmcNoVat && rep.nmcNoVat > 0 ? rep.nmcNoVat / qty : null,
+      lot: g.lot ?? g.procId, start: startD ? startD.toISOString().slice(0, 10) : null, end: end ? end.toISOString().slice(0, 10) : null,
+      mBase, mAfter, regionFixed: !!g.regionNote,
     });
   }
   const rows = aggregateForecast(points, ref, opt);
@@ -315,12 +358,20 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
   const fx = at("fx"), fxCons = at("fx_cons");
   const minstroy = at("minstroy");
 
-  type Item = { p: ContractPoint; price: number; adjusted: boolean; needed: boolean };
+  type Item = { p: ContractPoint; price: number; adjusted: boolean; needed: boolean; share: number };
   const groups = new Map<string, Item[]>();
   const lastMonth = toDec.length ? Math.min(12, Math.max(...toDec.map((i) => i.month ?? 0)) + 1) : 12;
   for (const p of points) {
     let price = p.raw;
     let adjusted = true;
+    // Договор заходит на следующий год: месяцы после базового года оплачены уже по новой цене (× рост цен),
+    // поэтому цена базового года = стоимость / (месяцы базового года + месяцы следующего × (1 + рост))
+    let share = 1;
+    if (p.mAfter && p.mAfter > 0 && p.mBase != null) {
+      const kp = Math.max(findIndex(fc, p.okpd2, okvedSection(p.okpd2, ref))?.index.value ?? cpi?.value ?? 1, cpi?.value ?? 1);
+      share = (p.mBase + p.mAfter) / (p.mBase + kp * p.mAfter);
+      price *= share;
+    }
     // Цена позже последнего месяца с данными Росстата (или в следующем году) уже на уровне точки пересчёта — шаг не нужен
     const year = p.year ?? opt.baseYear;
     const needed = year < opt.baseYear || (year === opt.baseYear && p.month !== 12 && (p.month == null || p.month < lastMonth));
@@ -331,7 +382,7 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       else adjusted = false;
     }
     const key = groupKey(p);
-    const item = { p, price, adjusted, needed };
+    const item = { p, price, adjusted, needed, share };
     groups.get(key)?.push(item) ?? groups.set(key, [item]);
   }
 
@@ -395,8 +446,16 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       needsApproval = true;
       notes.push(cpi ? "индекс по ОКПД2/ОКВЭД2 не найден — применён прогноз ИПЦ" : "нет ни отраслевого индекса, ни прогноза ИПЦ — цена не индексирована");
     }
+    let floored: number | null = null;
     if (used) {
       k = used.value;
+      // Отрицательный рост отрасли (снижение цен производителей) не значит, что закупка подешевеет:
+      // в цену работ входят зарплаты и расходы исполнителя — берём не ниже общей инфляции
+      if (k < 1 && cpi && cpi.value > 1 && level !== "fx") {
+        floored = k;
+        notes.push(`индекс ${pct(k)} отрицательный — для закупки взята инфляция ${pct(cpi.value)}`);
+        k = cpi.value;
+      }
       const s = used.source_code ? sourceByCode.get(used.source_code) : undefined;
       src = s?.name ?? used.source_code ?? "";
       if (!used.approved) { needsApproval = true; notes.push("индекс не утверждён"); }
@@ -428,7 +487,10 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       contracts: items.length, outliers,
       minPrice: round2(Math.min(...kept)), maxPrice: round2(Math.max(...kept)),
       basePrice: round2(base),
-      forecastIndex: k, forecastIndexCons: cons?.value ?? k, indexLevel: level, indexSource: src, currency: g0.currency ?? null,
+      forecastIndex: k, forecastIndexCons: floored != null ? Math.max(cons?.value ?? 0, cpiCons?.value ?? k) : cons?.value ?? k,
+      indexFloored: floored,
+      apportioned: items.filter((i) => i.share !== 1).length,
+      regionFixed: items.filter((i) => i.p.regionFixed).length, indexLevel: level, indexSource: src, currency: g0.currency ?? null,
       indexSourceUrl: used?.source_code ? sourceByCode.get(used.source_code)?.url ?? "" : "",
       forecastPrice: round2(base * k),
       prices: keptItems.map((i) => round2(i.p.raw)).sort((a, b) => a - b),
@@ -441,7 +503,7 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       repeatable,
       method: mostFrequent(items.map((i) => i.p.method)),
       vatRate: ((v) => (v == null ? null : Number(v)))(mostFrequent(items.map((i) => (i.p.vat == null ? null : String(i.p.vat))))),
-      points: items.map((i) => ({ ...i.p, raw: round2(i.p.raw) })),
+      points: items.map((i) => ({ ...i.p, raw: round2(i.p.raw), share: i.share === 1 ? null : Math.round(i.share * 100000) / 100000 })),
       vatFile: vatFile == null ? null : Number(vatFile),
       gpzNames: [...names.entries()].sort((a, b) => b[1] - a[1]).map(([n]) => n).slice(0, 5),
       volume, baseSum: round2(baseSum),

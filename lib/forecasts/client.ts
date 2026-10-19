@@ -33,7 +33,8 @@ export const fmtDateTime = (s: string) => new Date(s).toLocaleString("ru-RU", { 
 const CHUNK = 300;
 
 /** Договоры в строке — только цена, дата, количество и отметки: этого достаточно для пересчёта, без сведений о заказчике */
-const slim = (r: ForecastRow) => ({ ...r, points: (r.points ?? []).map(({ raw, month, year, qty, months, ds, active, gpzMonths, quarter, vatFile, currency, nmc }) => ({ raw, month, year, qty, months, ds, active, gpzMonths, quarter, vatFile, currency, nmc })) });
+const slim = (r: ForecastRow) => ({ ...r, points: (r.points ?? []).map(({ raw, month, year, qty, months, ds, active, gpzMonths, quarter, vatFile, currency, nmc, lot, start, end, mBase, mAfter, subject, regionFixed, share }) =>
+    ({ raw, month, year, qty, months, ds, active, gpzMonths, quarter, vatFile, currency, nmc, lot, start, end, mBase, mAfter, subject, regionFixed, share })) });
 
 /** Отпечаток пары файлов: по нему узнаём повторную загрузку тех же файлов. Сами файлы на сервер не уходят */
 async function filesHash(a: ArrayBuffer, b: ArrayBuffer) {

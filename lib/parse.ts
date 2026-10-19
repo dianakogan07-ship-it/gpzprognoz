@@ -20,8 +20,12 @@ export interface GpzRow {
   vatRate: number | null;
   /** Наименование региона рядом с кодом ОКАТО */
   regionName: string | null;
-  /** Ошибка кода ОКАТО: кода нет в справочнике или он не совпадает с названием региона */
+  /** Ошибка кода ОКАТО: ни код, ни название региона не распознаны */
   regionError: string | null;
+  /** Код ОКАТО исправлен по названию региона */
+  regionNote?: string | null;
+  /** НМЦ из ГПЗ без НДС — для закупок, по которым ещё нет договора */
+  nmcNoVat?: number | null;
   /** Срок начала работ и срок исполнения договора по плану */
   workStart: Date | null;
   workEnd: Date | null;
@@ -50,7 +54,7 @@ export interface ReportRow {
 }
 
 type Matcher = RegExp[];
-const GPZ_COLS: Record<keyof Omit<GpzRow, "row" | "regionError">, Matcher> = {
+const GPZ_COLS: Record<keyof Omit<GpzRow, "row" | "regionError" | "regionNote">, Matcher> = {
   lot: [/реестров\S*\s+номер\s+лот/i, /номер\s+лота/i],
   procId: [/id\s*процедур/i, /идентификатор\s+процедур/i],
   subject: [/предмет/i, /наименовани\S*\s+(закупк|лот|договор)/i],
@@ -67,6 +71,7 @@ const GPZ_COLS: Record<keyof Omit<GpzRow, "row" | "regionError">, Matcher> = {
   workStart: [/срок\S*\s+начал/i],
   workEnd: [/срок\S*\s+исполнени/i],
   quarter: [/^квартал/i],
+  nmcNoVat: [/начальн\S*.*без\s*ндс/i],
 };
 const REPORT_COLS: Record<string, Matcher> = {
   lot: GPZ_COLS.lot,
@@ -194,10 +199,11 @@ export function parseGpz(buf: ArrayBuffer, regions: { code: string; name: string
       unitName: normUnit(cell(r, c.unitName)),
       method: str(cell(r, c.method)),
       quantity: toNumber(cell(r, c.quantity)),
-      ...((x) => ({ region: x.code, regionError: x.error }))(resolveRegion(cell(r, c.region), str(cell(r, c.regionName)), regions)),
+      ...((x) => ({ region: x.code, regionError: x.error, regionNote: x.note }))(resolveRegion(cell(r, c.region), str(cell(r, c.regionName)), regions)),
       regionName: str(cell(r, c.regionName)),
       workStart: toDate(cell(r, c.workStart)),
       workEnd: toDate(cell(r, c.workEnd)),
+      nmcNoVat: toNumber(cell(r, c.nmcNoVat)),
       quarter: ((q) => (q != null && q >= 1 && q <= 4 ? Math.round(q) : null))(toNumber(cell(r, c.quarter))),
       category: str(cell(r, c.category)),
       ws: normWs(cell(r, c.ws)),

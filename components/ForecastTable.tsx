@@ -338,14 +338,24 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             {onEdit && <button className="btn-sec" onClick={() => { const v = card; setCard(null); onEdit(v); }}><IconEdit width={16} height={16} />Изменить цену</button>}
             <button className="btn" onClick={() => setCard(null)}>Закрыть</button>
           </>}>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {([[`Цена договоров ${baseYear} без НДС`, fmtRub(contractPrice(card.row))], [`Прогноз ${targetYear} без НДС`, fmtRub(card.row.forecastPrice)], [`Прогноз ${targetYear} с НДС`, fmtRub(withVat(card.row))], ["Рост", fmtGrowth(card.growth)]] as const).map(([l, val]) => (
-              <div key={l} className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">{l}</p><p className="font-semibold text-slate-900">{val}</p></div>
-            ))}
-          </div>
-          {card.row.forecastIndexCons != null && Math.abs(card.row.forecastIndexCons - card.row.forecastIndex) > 1e-6 && (
-            <p className="text-sm text-slate-600">Консервативный сценарий МЭР: <b className="text-slate-900">{fmtRub(Math.round(card.row.forecastPrice * card.row.forecastIndexCons / card.row.forecastIndex * 100) / 100)}</b> без НДС, итого рост {fmtGrowth(Math.round((card.row.forecastPrice * card.row.forecastIndexCons / card.row.forecastIndex / contractPrice(card.row) - 1) * 1000) / 10)}</p>
-          )}
+          {(() => {
+            const r = card.row, vat = r.vatRate ?? DEFAULT_VAT, base = contractPrice(r);
+            const cons = r.forecastPrice * ((r.forecastIndexCons ?? r.forecastIndex) / r.forecastIndex);
+            const tile = (title: string, price: number, accent?: boolean) => (
+              <div className={`rounded-lg px-3 py-2 ${accent ? "bg-brand-light ring-1 ring-brand/20" : "bg-slate-50"}`}>
+                <p className="text-xs text-slate-500">{title}</p>
+                <p className="font-semibold text-slate-900">{fmtRub(Math.round(price * 100) / 100)} <span className="text-xs font-normal text-slate-500">без НДС</span></p>
+                {price !== base && <p className="text-xs text-slate-600">{fmtRub(Math.round(price * (1 + vat) * 100) / 100)} с НДС · {fmtGrowth(Math.round((price / base - 1) * 1000) / 10)}</p>}
+              </div>
+            );
+            return (
+              <div className="grid gap-3 sm:grid-cols-3">
+                {tile(`Цена договоров ${baseYear}`, base)}
+                {tile(`Прогноз ${targetYear} — базовый сценарий`, r.forecastPrice, true)}
+                {tile(`Прогноз ${targetYear} — консервативный`, cons)}
+              </div>
+            );
+          })()}
           <p className="text-xs text-slate-500">за {card.row.unitLabel} · по {card.row.contracts} {plural(card.row.contracts, "договору", "договорам", "договорам")} {baseYear} года</p>
           <Steps v={card} baseYear={baseYear} sources={sources} />
           {(card.reasons.length > 0 || card.meta?.edited) && (

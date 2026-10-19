@@ -19,6 +19,7 @@ const ref = (indices: PriceIndex[]) => ({ ...SEED, indices });
 const idx = [
   ix({ id: 1, key: "C", value: 1.047 }),
   ix({ id: 2, key: "19.2", value: 1.059 }),
+  ix({ id: 3, kind: "cpi", key: null, value: 1.045 }),
   ...[1, 2, 3, 4, 5, 6, 7].map((m) => ix({ id: 10 + m, kind: "to_december", key: "19.2", year: 2026, month: m, value: 1.426 })),
 ];
 
@@ -30,13 +31,13 @@ describe("замечания от 13.10.2026", () => {
     expect(findIndex(idx.filter((i) => i.kind === "forecast"), "19.20.21.135", "C")?.index.key).toBe("19.2");
   });
 
-  it("№5: ОКАТО 71160 — не Тюменская область, а ошибка; код сверяется с названием", () => {
-    expect(resolveRegion("71160", "Ямало-Ненецкий автономный округ", SEED.regions).error).toMatch(/71160/);
-    expect(resolveRegion("71160", null, SEED.regions).code).toBeNull();
-    expect(resolveRegion("71140", "Ямало-Ненецкий автономный округ", SEED.regions)).toEqual({ code: "71140", error: null });
-    expect(resolveRegion("71", "Ямало-Ненецкий автономный округ", SEED.regions).error).toMatch(/не совпадает/);
-    expect(resolveRegion("40", "Город Санкт-Петербург город федерального значения", SEED.regions)).toEqual({ code: "40", error: null });
-    expect(resolveRegion("71100", "г. Сургут", SEED.regions)).toEqual({ code: "71100", error: null });
+  it("№5: ОКАТО 71160 — не Тюменская область; неверный код исправляется по названию региона, без названия — ошибка", () => {
+    expect(resolveRegion("71160", "Ямало-Ненецкий автономный округ", SEED.regions)).toMatchObject({ code: "71140", error: null, note: expect.stringMatching(/71160/) });
+    expect(resolveRegion("71160", null, SEED.regions)).toMatchObject({ code: null, error: expect.stringMatching(/71160/) });
+    expect(resolveRegion("71140", "Ямало-Ненецкий автономный округ", SEED.regions)).toEqual({ code: "71140", error: null, note: null });
+    expect(resolveRegion("71", "Ямало-Ненецкий автономный округ", SEED.regions)).toMatchObject({ code: "71140", note: expect.stringMatching(/не совпадает/) });
+    expect(resolveRegion("40", "Город Санкт-Петербург город федерального значения", SEED.regions)).toEqual({ code: "40", error: null, note: null });
+    expect(resolveRegion("71100", "г. Сургут", SEED.regions)).toEqual({ code: "71100", error: null, note: null });
     const res = buildForecast([gpz({ regionError: "Код ОКАТО 71160 не найден", region: null })], [rep({})], ref(idx), { baseYear: 2026, targetYear: 2027 });
     expect(res.rows).toHaveLength(0);
     expect(res.excluded[0].reason).toMatch(/71160/);
@@ -93,8 +94,10 @@ describe("замечания от 13.10.2026", () => {
     expect(food.lotPrice).toBe(true);
     expect(food.longContracts).toBe(1);
     expect(food.activeTarget).toBe(1);
-    // Середина срока — май 2027: пересчёт внутри 2026 года не нужен
-    expect(food.toDecember).toBe("not_needed");
+    // 15.05.2026 – 14.05.2028: 7 месяцев в 2026, 17 — позже и уже по новой цене (питание — по инфляции 4,5 %)
+    expect(food.apportioned).toBe(1);
+    expect(food.rawMedian).toBe(5_000_000);
+    expect(food.basePrice).toBeCloseTo(5_000_000 * 24 / (7 + 1.045 * 17), 0);
   });
 });
 
@@ -123,6 +126,16 @@ describe("отдельные индексы: зарплаты, курс, Мин�
     expect(run({}, { currency: "Доллар США" })).toMatchObject({ indexLevel: "fx", forecastIndex: 1.099, forecastIndexCons: 1.119, currency: "USD" });
     expect(run({}, { currency: "Евро" })).toMatchObject({ indexLevel: "fx", forecastIndex: 1.099, currency: "EUR" });
     expect(run({}, { currency: "-" }).indexLevel).toBe("okpd2");
+  });
+  it("отрицательный отраслевой индекс — закупка не дешевеет: берётся инфляция", () => {
+    const r = buildForecast([gpz({ okpd2: "09.10.12.120" })], [rep({ contractDate: new Date(Date.UTC(2026, 11, 10)) })],
+      ref([ix({ id: 1, key: "09", value: 0.981 }), ix({ id: 2, kind: "cpi", key: null, value: 1.045 })]), { baseYear: 2026, targetYear: 2027 }).rows[0];
+    expect(r.forecastIndex).toBe(1.045);
+    expect(r.indexFloored).toBe(0.981);
+  });
+  it("закупка без договора попадает в план с НМЦ из ГПЗ и ростом цен", () => {
+    const res = buildForecast([gpz({ lot: "X", nmcNoVat: 2_000_000 })], [], ref(idx), { baseYear: 2026, targetYear: 2027 });
+    expect(res.excluded[0].plan).toMatchObject({ nmc: 2_000_000, k: 1.059 });
   });
   it("стройка — индекс Минстроя своего региона; в регионе без индекса — общий «Строительство»", () => {
     expect(run({ okpd2: "42.21.13.000", region: "71100" })).toMatchObject({ indexLevel: "minstroy", forecastIndex: 1.08, forecastIndexCons: 1.08 });

@@ -87,7 +87,8 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
     const m3 = (pct: number) => Math.round((1 + pct / 100) * 1000) / 1000;
     const rateRows = (gs: { key: string; total: number; rows: ForecastRow[] }[], ex: boolean) => gs.map((g) => {
       const n = g.rows.reduce((s, r) => s + r.contracts, 0);
-      return [g.key || "Без категории", ...(ex ? [[...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 3).join("; ")] : []), p1(g.total), m3(g.total), n, reliability(n).text];
+      return [g.key || "Без категории", ...(ex ? [[...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 3).join("; ")] : []), p1(g.total), m3(g.total),
+        ...(audience === "staff" ? [n, reliability(n).text] : [])];
     });
     if (audience === "customer") {
       const headC = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Рост к ценам договоров ${baseYear}, базовый сценарий МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
@@ -99,8 +100,8 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
         [],
         ["Как применить: сумма закупки " + baseYear + " × множитель = ориентир на " + year + ". Проценты одинаковы для сумм с НДС и без НДС."],
       ], [60, 14]);
-      add("Рост по категориям", [...headC, ["Категория", "Рост, %", "Множитель", "Договоров", "Надёжность"], ...rateRows(cats, false)], [48, 10, 12, 12, 14]);
-      add("Рост по направлениям", [...headC, ["Направление", "Примеры закупок", "Рост, %", "Множитель", "Договоров", "Надёжность"], ...rateRows(subjects, true)], [50, 60, 10, 12, 12, 14]);
+      add("Рост по категориям", [...headC, ["Категория", "Рост, %", "Множитель"], ...rateRows(cats, false)], [48, 10, 12]);
+      add("Рост по направлениям", [...headC, ["Направление", "Примеры закупок", "Рост, %", "Множитель"], ...rateRows(subjects, true)], [50, 60, 10, 12]);
       add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
       const { downloadWorkbook } = await import("@/lib/excel");
       const regs = f.region.map((k) => counts.reg.get(k)?.label ?? k);
@@ -277,7 +278,8 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
                 </p>
                 {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
               </div>
-              <MoneySheet part="summary" view={slice} year={year} baseYear={baseYear} shortCat={shortCat} growth={total.total} cpi={cpi} cpiSource={cpiSource} />
+              <MoneySheet part="summary" view={slice} year={year} baseYear={baseYear} shortCat={shortCat} growth={total.total} cpi={cpi} cpiSource={cpiSource}
+                plan={excluded.filter((e) => e.plan && (!f.category.length || f.category.includes(e.plan.category ?? "")) && (!f.region.length || f.region.includes(e.plan.region ?? "")))} />
             </Sheet>
             <Sheet>
               <InputsSheet view={slice} reference={reference} year={year} baseYear={baseYear} />
@@ -369,10 +371,13 @@ function dataNotes(view: ViewRow[], year: number, baseYear: number) {
  * Деньги для сотрудника. summary — сумма ГПЗ и потребность по категориям, топ-10, кварталы;
  * basis — надёжность расчёта и НМЦ
  */
-function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSource }: {
+function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSource, plan = [] }: {
   part: "summary" | "basis"; view: ViewRow[]; year: number; baseYear: number; shortCat: (n: string) => string; growth: number; cpi: number | null; cpiSource: string;
+  /** Закупки из плана без договора — входят в сумму ГПЗ по НМЦ из плана */
+  plan?: ExcludedRow[];
 }) {
   const m = moneyData(view);
+  const planNmc = plan.reduce((s, e) => s + e.plan!.nmc, 0), planNext = plan.reduce((s, e) => s + e.plan!.nmc * e.plan!.k, 0);
   const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
   const td = "border-t py-1.5 pr-3";
   const qMax = Math.max(1, ...m.quarters);
@@ -391,6 +396,13 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
             note={m.cons ? `базовый ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)} – консервативный ${fmtPct(m.base ? (m.fcCons / m.base - 1) * 100 : 0)} сценарий МЭР` : `по прогнозным ценам, ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)}`} />
           <Kpi label="Прирост" value={fmtMoney(m.fc - m.base)} note={m.partial ? "часть позиций без количества не учтена" : "при том же объёме закупок"} />
         </div>
+        {plan.length > 0 && (
+          <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2, ...NUM }}>
+            <p className="font-semibold" style={{ color: RC.ink }}>Закупки из плана без договора — {plan.length} {plural(plan.length, "строка", "строки", "строк")} ГПЗ</p>
+            <p className="mt-0.5">По ним нет заключённого договора, поэтому в расчёт цен они не входят, но в сумму ГПЗ включены по НМЦ из плана с ростом цен своего направления: {fmtMoney(planNmc)} → <b style={{ color: RC.ink }}>{fmtMoney(planNext)}</b>.</p>
+            <p className="mt-1 font-semibold" style={{ color: RC.ink }}>Всего ГПЗ с ними: {fmtMoney(m.base + planNmc)} → {fmtMoney(m.fc + planNext)} ({fmtPct(m.base + planNmc ? ((m.fc + planNext) / (m.base + planNmc) - 1) * 100 : 0)})</p>
+          </div>
+        )}
         <p className="text-xs" style={{ color: RC.ink2 }}><b style={{ color: RC.ink }}>Допущение:</b> потребность {year} = объём закупок из ГПЗ {baseYear} × прогнозные цены. Если в ГПЗ {year} изменится состав или объём закупок, сумму нужно пересчитать — проценты роста по категориям при этом остаются ориентиром.</p>
         <div className="grid gap-3 lg:grid-cols-2">
           <Box title="Сумма по категориям">
@@ -528,6 +540,9 @@ function AttentionSheet({ view, excluded, year, baseYear }: { view: ViewRow[]; e
   const groupOf = (r: string) => (/ОКАТО/.test(r) ? "Ошибка кода ОКАТО (кода нет в справочнике или он не совпадает с регионом)" : reasonGroup(r));
   for (const e of excluded) groups.set(groupOf(e.reason), (groups.get(groupOf(e.reason)) ?? 0) + 1);
   const ex = [...groups.entries()].sort((a, b) => b[1] - a[1]);
+  const okatoMap = new Map<string, number>();
+  for (const e of excluded) if (/ОКАТО/.test(e.reason)) okatoMap.set(e.reason, (okatoMap.get(e.reason) ?? 0) + 1);
+  const okato = [...okatoMap.entries()];
   const th = "py-1.5 pr-3 text-left text-[10.5px] font-medium uppercase tracking-wide";
   const td = "border-t py-1.5 pr-3 align-top";
   return (
@@ -553,6 +568,14 @@ function AttentionSheet({ view, excluded, year, baseYear }: { view: ViewRow[]; e
               <tr key={k}><td className={td} style={{ borderColor: RC.line }}>{k}</td><td className={`${td} text-right font-semibold`} style={{ borderColor: RC.line }}>{n}</td></tr>
             ))}</tbody></table>
           )}
+          {okato.length > 0 && (
+            <div className="mt-2 text-[11px]" style={{ color: RC.ink2 }}>
+              <p className="font-semibold" style={{ color: RC.ink }}>Какие коды ОКАТО не распознаны:</p>
+              <ul className="list-disc pl-4">{okato.map(([r, n]) => <li key={r}>{r.replace(/^Код ОКАТО /, "")}{n > 1 ? ` — ${n} строк` : ""}</li>)}</ul>
+              <p className="mt-1">Добавьте код в «Справочники → Регионы» или укажите в ГПЗ название региона — строки войдут в расчёт при повторной загрузке.</p>
+            </div>
+          )}
+          {excluded.some((e) => e.plan) && <p className="mt-2 text-[11px]" style={{ color: RC.ink2 }}>Строки без договора с НМЦ в ГПЗ включены в сумму ГПЗ на листе «Итог».</p>}
           <p className="mt-2 text-[11px]" style={{ color: RC.muted }}>Список строк — на вкладке «Прогноз», ссылка «Посмотреть».</p>
         </Box>
       </div>
@@ -570,7 +593,8 @@ const REASON_SHORT: Record<ReasonCode, string> = {
   cpi: "нет отраслевого индекса — по инфляции", no_index: "нет индекса", unapproved: "индекс не утверждён", not_december: "не пересчитана внутри года",
   repeat_unknown: "повторяемость не определена", few_contracts: "1–2 договора", vat_file: "НДС в файле не 22 %", later_year: "договор после базового года",
   long: "договор длиннее года", ds: "рост по допсоглашению", active: "договор действует весь год", months: "месяцы в ГПЗ ≠ сроку договора",
-  lot: "цена за весь лот", okpd_short: "ОКПД2 неполный",
+  lot: "цена за весь лот", okpd_short: "ОКПД2 неполный", negative_index: "индекс МЭР отрицательный — взята инфляция",
+  okato_fixed: "ОКАТО неверный — регион по названию", apportioned: "договор поделён по годам",
 };
 
 
@@ -584,8 +608,8 @@ function reliability(contracts: number) {
 }
 
 /** Рост по группам для заказчика: полоса с линией инфляции, множитель к сумме и надёжность */
-function RateTable({ groups, year, baseYear, cpi, examples }: {
-  groups: { key: string; label: string; total: number; rows: ForecastRow[] }[]; year: number; baseYear: number; cpi: number | null; examples?: boolean;
+function RateTable({ groups, year, baseYear, cpi, examples, showReliability }: {
+  groups: { key: string; label: string; total: number; rows: ForecastRow[] }[]; year: number; baseYear: number; cpi: number | null; examples?: boolean; showReliability?: boolean;
 }) {
   const max = Math.max(cpi ?? 0, ...groups.map((g) => g.total), 1);
   const min = Math.min(0, ...groups.map((g) => g.total));
@@ -596,7 +620,7 @@ function RateTable({ groups, year, baseYear, cpi, examples }: {
     <table className="w-full text-xs" style={NUM}>
       <thead style={{ color: RC.muted }}><tr>
         <th className={th}>{examples ? "Направление" : "Категория"}</th><th className={`${th} w-[34%]`}>Рост цен {year} к {baseYear}</th>
-        <th className={`${th} text-right`}>Множитель к сумме</th><th className={`${th} text-right`}>Надёжность</th>
+        <th className={`${th} text-right`}>Множитель к сумме</th>{showReliability && <th className={`${th} text-right`}>Надёжность</th>}
       </tr></thead>
       <tbody>{groups.map((g) => {
         const contracts = g.rows.reduce((s, r) => s + r.contracts, 0);
@@ -616,12 +640,12 @@ function RateTable({ groups, year, baseYear, cpi, examples }: {
               </div>
             </td>
             <td className={`${td} whitespace-nowrap text-right font-semibold`} style={{ borderColor: RC.line, color: RC.ink }}>× {fmtMult(g.total)}</td>
-            <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}><span style={{ color: rel.c }}>{rel.text}</span>
-              <span className="block text-[10px]" style={{ color: RC.muted }}>{contracts} {plural(contracts, "договор", "договора", "договоров")}</span></td>
+            {showReliability && <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}><span style={{ color: rel.c }}>{rel.text}</span>
+              <span className="block text-[10px]" style={{ color: RC.muted }}>{contracts} {plural(contracts, "договор", "договора", "договоров")}</span></td>}
           </tr>
         );
       })}</tbody>
-      {cpi != null && <caption className="caption-bottom pt-2 text-left text-[10.5px]" style={{ color: RC.muted }}>Пунктир — общая инфляция {fmtNum(cpi)} %: правее неё направление дорожает быстрее инфляции. «Мало данных» — меньше 5 договоров, сверьте с коммерческими предложениями.</caption>}
+      {cpi != null && <caption className="caption-bottom pt-2 text-left text-[10.5px]" style={{ color: RC.muted }}>Пунктир — общая инфляция {fmtNum(cpi)} %: правее неё направление дорожает быстрее инфляции.{showReliability ? " «Мало данных» — меньше 5 договоров, сверьте с коммерческими предложениями." : ""}</caption>}
     </table>
   );
 }
@@ -779,7 +803,6 @@ function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: numbe
           <div key={t}><b className="block text-[11px] font-semibold leading-tight sm:text-xs">{t}</b><span className="text-[10.5px]" style={{ color: RC.muted }}>{sub}</span></div>
         ))}
       </div>
-      <p className="mt-1.5 text-[10.5px]" style={{ color: RC.muted }}>Шкала начинается с {floor}&nbsp;%, чтобы приросты были видны.</p>
     </div>
   );
 }

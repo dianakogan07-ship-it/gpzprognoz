@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, useReference } from "@/components/useReference";
 import { ForecastTable, useForecastFilters } from "@/components/ForecastTable";
 import { ForecastReport } from "@/components/ForecastReport";
+import { PositionDetails } from "@/components/PositionDetails";
 import { Modal } from "@/components/Modal";
 import { PromptModal } from "@/components/PromptModal";
 import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecasts/client";
@@ -219,11 +220,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")}
         onEdit={editable ? setEditing : undefined}
         onReview={editable ? setReviewed : undefined}
-        rowDetails={(v) => (
-          <div className="mt-2 flex flex-wrap items-center gap-4 text-xs">
-            <Link href={`/forecasts/${id}/history?okpd=${encodeURIComponent(v.row.okpd2)}`} className="text-brand hover:underline">История изменений позиции</Link>
-          </div>
-        )} />}
+        rowDetails={(v) => (v.meta ? <PositionDetails itemId={v.meta.itemId} baseYear={f.base_year} /> : null)} />}
 
       {editing && (
         <EditModal v={editing} frozen={frozen} onClose={() => setEditing(null)} onSave={async (field, value, reason) => {
