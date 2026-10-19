@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IconDownload } from "./Icons";
 import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
@@ -52,7 +52,6 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
   const totalSum = rows.reduce((s, r) => s + (sumBase(r) ?? 0), 0);
   const aboveShare = cpi == null || !totalSum ? null
     : (subjects.filter((g) => r1(g.total) > r1(cpi)).reduce((s, g) => s + g.rows.reduce((t, r) => t + (sumBase(r) ?? 0), 0), 0) / totalSum) * 100;
-  const widest = multi.map((x) => ({ x, d: x.regs[0].fc > 0 ? (x.regs[x.regs.length - 1].fc / x.regs[0].fc - 1) * 100 : 0 })).sort((a, b) => b.d - a.d)[0];
 
   // Счётчики для фильтров — по всем позициям
   const counts = useMemo(() => {
@@ -72,6 +71,10 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
   const sources = reference.sources.filter((s) => SOURCE_CODES.includes(s.code));
   const rootRef = useRef<HTMLDivElement>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
+  // Суммы ГПЗ — конфиденциальны: по умолчанию в отчёт (экран, PDF, Excel) не попадают
+  const [showMoney, setShowMoney] = useState(false);
+  useEffect(() => { try { setShowMoney(localStorage.getItem("report-show-money") === "1"); } catch { /* недоступно */ } }, []);
+  const toggleMoney = (v: boolean) => { setShowMoney(v); try { localStorage.setItem("report-show-money", v ? "1" : "0"); } catch { /* недоступно */ } };
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
 
   async function downloadExcel() {
@@ -87,7 +90,6 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
     add("Сводка", [...head,
       ["Показатель", "Значение", "Ед."],
       [`Средний рост цен в ${year}`, p1(total.total), "%"],
-      ...(hasCons(rows) ? [[`Средний рост цен в ${year}, консервативный сценарий МЭР`, p1(avgGrowth(consRows(rows))), "%"]] : []),
       ...(cpi != null ? [[`Инфляция, прогноз ${cpiSource} на ${year}`, p1(cpi), "%"]] : []),
       ["Позиций", rows.length, "шт."],
       ["Предметов закупки", subjects.length, "шт."],
@@ -114,7 +116,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         i === 0 ? "минимум" : p1((r.fc / it.regs[0].fc - 1) * 100)])),
     ], [50, 10, 40, 20, 20, 20]);
     const money = moneyData(slice);
-    if (money.hasSums) {
+    if (money.hasSums && showMoney) {
       const r0 = (v: number) => Math.round(v);
       add("Суммы по категориям", [...head,
         ["Категория", `Сумма ${baseYear}, ₽ без НДС`, `Потребность ${year}, ₽ без НДС`, "Прирост, ₽", "Рост, %"],
@@ -158,7 +160,11 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         <MultiSelect label="Регион" searchable value={f.region} onChange={(region) => set({ region })}
           options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
         <span className="hidden text-xs sm:inline" style={{ color: RC.muted }}>Фильтры общие с вкладкой «Прогноз»</span>
-        <div className="ml-auto flex gap-2">
+        <label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-sm" style={{ color: RC.ink2 }} title="Сумма ГПЗ, потребность по категориям, топ-10 в рублях — конфиденциально, не для заказчиков">
+          <input type="checkbox" checked={showMoney} onChange={(e) => toggleMoney(e.target.checked)} />
+          Суммы ГПЗ в отчёте <span className="text-xs" style={{ color: RC.muted }}>(конфиденциально)</span>
+        </label>
+        <div className="flex gap-2">
           <button className="btn-sec" disabled={pdfBusy || !rows.length} onClick={downloadPdf}><IconDownload />{pdfBusy ? "Готовим PDF…" : "PDF"}</button>
           <button className="btn-sec" disabled={!rows.length} onClick={downloadExcel}><IconDownload />Excel</button>
         </div>
@@ -175,17 +181,15 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
               </p>
               {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
             </div>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
               <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.navy }}>
                 <p className="text-xs text-white/75">Средний рост цен в {year}</p>
                 <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(total.total)}</p>
                 <p className="text-[11.5px] text-white/75">{cpi != null ? `инфляция, прогноз ${cpiSource}: ${fmtPct(cpi)}` : "прогноза инфляции в базе нет"}</p>
-                {hasCons(rows) && <p className="mt-0.5 text-[11.5px] text-white/90">консервативный сценарий МЭР: {fmtPct(avgGrowth(consRows(rows)))}</p>}
               </div>
               {cpi != null && <Kpi label="Дороже инфляции" value={<>{above} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>из {subjects.length}</small></>}
-                note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %${aboveShare != null ? ` — это ${fmtNum(aboveShare, 0)} % суммы ГПЗ` : ""}`} />}
+                note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %${aboveShare != null && showMoney ? ` — это ${fmtNum(aboveShare, 0)} % суммы ГПЗ` : ""}`} />}
               {top && <Kpi label="Максимальный рост" value={fmtPct(top.total)} note={top.key} />}
-              {widest && <Kpi label="Разница цен между регионами" value={`до +${fmtNum(widest.d, 0)} %`} note={widest.x.subject} />}
             </div>
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
               <Box title="Из чего складывается рост"><Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} /></Box>
@@ -241,7 +245,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
           </Sheet>
 
           {/* Лист 4. Деньги и надёжность расчёта */}
-          <Sheet><MoneySheet view={slice} year={year} baseYear={baseYear} shortCat={shortCat} /></Sheet>
+          {showMoney && <Sheet><MoneySheet view={slice} year={year} baseYear={baseYear} shortCat={shortCat} /></Sheet>}
         </div>
       )}
 
