@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { IconDownload } from "./Icons";
 import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
@@ -7,7 +7,8 @@ import { EMPTY_FILTERS, filterRows, regionKey, type ViewRow } from "@/lib/foreca
 import { lastDataMonth } from "@/lib/logic";
 import { RC, avgGrowth, consRatio, consRows, hasCons, evenCeil, fmtMoney, fmtNum, fmtPct, groupSplit, shortRegion, splitGrowth, sumBase, sumForecast, ticks } from "@/lib/report";
 import { contractPrice } from "@/lib/forecast";
-import { isActiveIndex, type Reference } from "@/lib/types";
+import { isActiveIndex, type PriceIndex, type Reference } from "@/lib/types";
+import { MONTHS } from "@/lib/indexFormat";
 import type { ForecastRow } from "@/lib/forecast";
 import { plural } from "@/lib/forecastView";
 
@@ -21,7 +22,9 @@ type Group = { key: string; label?: string; total: number; intra: number; indust
  * Отчёт для закупщиков: три листа, одинаковые на экране и в PDF.
  * Срез — общие с вкладкой «Прогноз» фильтры «Категория» и «Регион»; статус не учитывается.
  */
-export function ForecastReport({ view, filters, reference, year, baseYear, approved, approvedAt, title }: {
+export function ForecastReport({ audience, view, filters, reference, year, baseYear, approved, approvedAt, title }: {
+  /** staff — внутренний отчёт: суммы ГПЗ и исходные данные расчёта; customer — для заказчиков, только проценты */
+  audience: "staff" | "customer";
   view: ViewRow[]; filters: ForecastFilters; reference: Reference;
   year: number; baseYear: number; approved: boolean; approvedAt: string | null; title: string;
 }) {
@@ -71,10 +74,8 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
   const sources = reference.sources.filter((s) => SOURCE_CODES.includes(s.code));
   const rootRef = useRef<HTMLDivElement>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
-  // Суммы ГПЗ — конфиденциальны: по умолчанию в отчёт (экран, PDF, Excel) не попадают
-  const [showMoney, setShowMoney] = useState(false);
-  useEffect(() => { try { setShowMoney(localStorage.getItem("report-show-money") === "1"); } catch { /* недоступно */ } }, []);
-  const toggleMoney = (v: boolean) => { setShowMoney(v); try { localStorage.setItem("report-show-money", v ? "1" : "0"); } catch { /* недоступно */ } };
+  // Суммы ГПЗ конфиденциальны — только в отчёте для сотрудников (экран, PDF, Excel)
+  const showMoney = audience === "staff";
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null);
 
   async function downloadExcel() {
@@ -110,10 +111,10 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
       ...subjects.map((g) => [g.key, p1(g.intra), p1(g.industry), p1(g.total)]),
     ], [60, 18, 20, 14]);
     const reg = regionTable(rows).filter((x) => x.regs.length >= 2);
-    if (reg.length) add("Цена по регионам", [...head,
-      ["Предмет закупки", "Ед.", "Регион", `Цена ${baseYear}, ₽ без НДС`, `Прогноз ${year}, ₽ без НДС`, "Отличие от минимума, %"],
+    if (reg.length) add("Разница цен по регионам", [...head,
+      ["Предмет закупки", "Ед.", "Регион", `Цена ${baseYear}, ₽ без НДС`, `Прогноз ${year}, ₽ без НДС`, "На сколько дороже самого дешёвого региона, %"],
       ...reg.flatMap((it) => it.regs.map((r, i) => [it.subject, it.unit, r.name, Math.round(r.base * 100) / 100, Math.round(r.fc * 100) / 100,
-        i === 0 ? "минимум" : p1((r.fc / it.regs[0].fc - 1) * 100)])),
+        i === 0 ? "дешевле всего" : p1((r.fc / it.regs[0].fc - 1) * 100)])),
     ], [50, 10, 40, 20, 20, 20]);
     const money = moneyData(slice);
     if (money.hasSums && showMoney) {
@@ -129,6 +130,28 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         ...money.top.map(({ r, base, fc, d }) => [r.gpzNames?.[0] ?? r.subject, r.regionName ?? "", r.okpd2, r0(base), r0(fc), r0(d)]),
       ], [50, 30, 16, 18, 20, 16]);
     }
+    if (audience === "staff") {
+      const act = reference.indices.filter(isActiveIndex);
+      const one = (kind: string, key: string | null = null) => act.find((i) => i.kind === kind && i.year === year && (i.key ?? null) === key);
+      const pc = (i?: PriceIndex) => (i ? p1((i.value - 1) * 100) : null);
+      const lm = lastDataMonth(reference.indices, baseYear);
+      const used = new Map<string, (string | number | null)[]>();
+      for (const r of rows) {
+        const k = `${r.indexLevel}|${r.indexKey ?? ""}|${r.indexLevel === "minstroy" ? r.region : ""}`;
+        const e = used.get(k) ?? [r.indexLevel === "minstroy" ? `Минстрой: ${r.regionName ?? r.region}` : `${r.indexLevel} ${r.indexKey ?? ""} ${r.indexName ?? ""}`.trim(), p1((r.forecastIndex - 1) * 100), p1(((r.forecastIndexCons ?? r.forecastIndex) - 1) * 100), 0];
+        e[3] = Number(e[3]) + 1; used.set(k, e);
+      }
+      add("Исходные данные", [...head,
+        ["Показатель", "Базовый, %", "Консервативный, %"],
+        ["Общая инфляция (ИПЦ)", pc(one("cpi")), pc(one("cpi_cons"))],
+        ["Рост зарплат", pc(one("wage")), pc(one("wage_cons"))],
+        ["Курс доллара", pc(one("fx", "USD")), pc(one("fx_cons", "USD"))],
+        [`Пересчёт внутри ${baseYear} года — до уровня`, lm ? `${MONTHS[lm - 1]} ${baseYear}` : "не загружен", null],
+        [],
+        ["Применённый индекс", `Рост ${year}, %`, "Консервативный, %", "Позиций"],
+        ...[...used.values()].sort((a, b) => Number(b[3]) - Number(a[3])),
+      ], [50, 16, 18, 10]);
+    }
     add("Надёжность", [...head, [money.byWeight ? "Источник цены (доля суммы)" : "Источник цены (доля позиций)", "%"], ...money.trust.map((t) => [t.label, p1(t.v)])], [50, 10]);
     add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
     const { downloadWorkbook } = await import("@/lib/excel");
@@ -139,7 +162,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
     try {
       setTip(null);
       const { exportPdf } = await import("@/lib/pdfExport");
-      const name = `Прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.pdf`.replace(/[\\/:*?"<>|]+/g, " ");
+      const name = `${audience === "staff" ? "Внутренний отчёт" : "Прогноз цен"} ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.pdf`.replace(/[\\/:*?"<>|]+/g, " ");
       await exportPdf(rootRef.current!, name);
     } catch (e) { alert(`Не удалось сформировать PDF: ${e instanceof Error ? e.message : e}`); }
     setPdfBusy(false);
@@ -160,10 +183,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         <MultiSelect label="Регион" searchable value={f.region} onChange={(region) => set({ region })}
           options={[...counts.reg.entries()].sort((a, b) => a[1].label.localeCompare(b[1].label, "ru")).map(([k, e]) => ({ value: k, label: e.label, count: e.n }))} />
         <span className="hidden text-xs sm:inline" style={{ color: RC.muted }}>Фильтры общие с вкладкой «Прогноз»</span>
-        <label className="ml-auto inline-flex cursor-pointer items-center gap-2 text-sm" style={{ color: RC.ink2 }} title="Сумма ГПЗ, потребность по категориям, топ-10 в рублях — конфиденциально, не для заказчиков">
-          <input type="checkbox" checked={showMoney} onChange={(e) => toggleMoney(e.target.checked)} />
-          Суммы ГПЗ в отчёте <span className="text-xs" style={{ color: RC.muted }}>(конфиденциально)</span>
-        </label>
+        <span className="ml-auto text-xs" style={{ color: audience === "staff" ? RC.warn : RC.muted }}>{audience === "staff" ? "Внутренний отчёт: есть суммы ГПЗ — заказчикам не отправлять" : "Без сумм ГПЗ — можно отправлять заказчикам"}</span>
         <div className="flex gap-2">
           <button className="btn-sec" disabled={pdfBusy || !rows.length} onClick={downloadPdf}><IconDownload />{pdfBusy ? "Готовим PDF…" : "PDF"}</button>
           <button className="btn-sec" disabled={!rows.length} onClick={downloadExcel}><IconDownload />Excel</button>
@@ -191,6 +211,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
                 note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %${aboveShare != null && showMoney ? ` — это ${fmtNum(aboveShare, 0)} % суммы ГПЗ` : ""}`} />}
               {top && <Kpi label="Максимальный рост" value={fmtPct(top.total)} note={top.key} />}
             </div>
+            {audience === "customer" && <HowTo>Средний рост — на сколько процентов в {year} году вырастет цена закупки по сравнению с ценой договоров {baseYear} года. Рост складывается из двух частей: голубая — цены, которые уже выросли в {baseYear} году после заключения договоров (данные Росстата), синяя — ожидаемый рост в {year} году (прогноз Минэкономразвития). Пунктирная линия — общая инфляция: всё, что правее неё, дорожает быстрее инфляции.</HowTo>}
             <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
               <Box title="Из чего складывается рост"><Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} /></Box>
               {cats.length > 0 && (
@@ -208,6 +229,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
               <h2 className="text-xl font-semibold">Рост по предмету закупки</h2>
               <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>По убыванию прогноза роста. Полное название и вклад каждого фактора — при наведении.</p>
             </div>
+            {audience === "customer" && <HowTo>Каждая строка — предмет закупки. Длина полосы — на сколько процентов вырастет его цена в {year} году к цене договоров {baseYear} года. Голубая часть — рост, который уже произошёл в {baseYear} году, синяя — ожидаемый рост в {year} году. Пунктир — общая инфляция. Сверху — предметы с самым большим ростом.</HowTo>}
             {cpi != null && <Strip above={above} equal={equal} below={subjects.length - above - equal} cpi={cpi} />}
             <div className="-mt-2">
               <Legend year={year} baseYear={baseYear} cpi={cpi} extra={cpi != null && equal > 0
@@ -219,14 +241,17 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
           {/* Лист 3. Регионы */}
           <Sheet>
             <div>
-              <h2 className="text-xl font-semibold">Цена по регионам</h2>
-              <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Насколько прогнозная цена {year} в регионе выше самой низкой. Ориентир берите по своему региону. Цены без НДС.</p>
+              <h2 className="text-xl font-semibold">Разница цен между регионами</h2>
+              <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Один и тот же предмет закупки в разных регионах стоит по-разному. Это не рост цен, а разница между регионами в {year} году. Ориентир берите по своему региону. Цены без НДС.</p>
+              <p className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: RC.bg, color: RC.ink2 }}>
+                <b style={{ color: RC.ink }}>Как читать.</b> Каждая строка — один предмет закупки. Левая точка — регион, где он дешевле всего. Остальные точки — насколько в других регионах дороже: «СПб на 77 % дороже» значит, что в Санкт-Петербурге прогнозная цена в 1,77 раза выше, чем в самом дешёвом регионе. Рост цен на {year} год — на первом листе отчёта.
+              </p>
             </div>
             {multi.length > 0 ? <>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]" style={{ color: RC.ink2 }}>
-                <span className="inline-flex items-center gap-1.5"><Dot c={RC.navy} />самая низкая цена</span>
+                <span className="inline-flex items-center gap-1.5"><Dot c={RC.navy} />регион, где дешевле всего</span>
                 <span className="inline-flex items-center gap-1.5"><Dot c={RC.blue} />другие регионы</span>
-                <span className="inline-flex items-center gap-1.5"><Dot c={RC.violet} />самая высокая цена</span>
+                <span className="inline-flex items-center gap-1.5"><Dot c={RC.violet} />регион, где дороже всего</span>
               </div>
               <DotPlot items={multi} year={year} baseYear={baseYear} />
             </> : <p className="text-sm" style={{ color: RC.muted }}>В срезе нет предметов, которые закупаются в двух и более регионах — сравнивать не с чем.</p>}
@@ -246,6 +271,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
 
           {/* Лист 4. Деньги и надёжность расчёта */}
           {showMoney && <Sheet><MoneySheet view={slice} year={year} baseYear={baseYear} shortCat={shortCat} /></Sheet>}
+          {audience === "staff" && <Sheet><InputsSheet view={slice} reference={reference} year={year} baseYear={baseYear} /></Sheet>}
         </div>
       )}
 
@@ -380,6 +406,98 @@ function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year:
           <ul className="list-disc space-y-0.5 pl-4">{notes.map((n) => <li key={n}>{n}</li>)}</ul>
         </div>
       )}
+    </>
+  );
+}
+
+/** Подсказка «Как читать» для заказчика */
+function HowTo({ children }: { children: ReactNode }) {
+  return <p className="rounded-lg px-3 py-2 text-xs leading-relaxed" style={{ background: RC.bg, color: RC.ink2 }}><b style={{ color: RC.ink }}>Как читать. </b>{children}</p>;
+}
+
+/** Исходные данные расчёта — для сотрудников: какие индексы и с какими значениями применены, качество данных */
+function InputsSheet({ view, reference, year, baseYear }: { view: ViewRow[]; reference: Reference; year: number; baseYear: number }) {
+  const act = reference.indices.filter(isActiveIndex);
+  const one = (kind: string, key: string | null = null) => act.find((i) => i.kind === kind && i.year === year && (i.key ?? null) === key) ?? null;
+  const src = (code: string | null) => (code ? reference.sources.find((x) => x.code === code)?.name.split(/\s+[—-]\s+/)[0] ?? code : "—");
+  const date = (i: { loaded_at?: string | null } | null) => (i?.loaded_at ? new Date(i.loaded_at).toLocaleDateString("ru-RU") : "—");
+  const lastMonth = lastDataMonth(reference.indices, baseYear);
+  const macro: [string, PriceIndex | null, PriceIndex | null][] = [
+    ["Общая инфляция (ИПЦ)", one("cpi"), one("cpi_cons")],
+    ["Рост зарплат — охрана, уборка, питание, обучение", one("wage"), one("wage_cons")],
+    ["Курс доллара — валютные договоры", one("fx", "USD"), one("fx_cons", "USD")],
+  ];
+  const rows = view.map((v) => v.row);
+  // Какие индексы фактически применены и к скольким позициям
+  const used = new Map<string, { label: string; value: number; cons: number; n: number; contracts: number }>();
+  const LEVEL: Record<string, string> = { okpd2: "ОКПД2", okved2: "раздел ОКВЭД2", cpi: "инфляция", wage: "зарплаты", fx: "курс", minstroy: "Минстрой" };
+  for (const r of rows) {
+    const k = `${r.indexLevel}|${r.indexKey ?? ""}`;
+    const label = r.indexLevel === "minstroy" ? `Минстрой: ${r.regionName ?? r.region ?? ""}` : `${LEVEL[r.indexLevel]}${r.indexKey ? ` ${r.indexKey}` : ""}${r.indexName ? ` — ${r.indexName}` : ""}`;
+    const e = used.get(k) ?? { label, value: r.forecastIndex, cons: r.forecastIndexCons ?? r.forecastIndex, n: 0, contracts: 0 };
+    e.n++; e.contracts += r.contracts; used.set(k, e);
+  }
+  const usedList = [...used.values()].sort((a, b) => b.n - a.n);
+  const q = (pred: (r: ForecastRow) => number) => rows.reduce((s, r) => s + pred(r), 0);
+  const quality: [string, number][] = [
+    ["Позиций в прогнозе", rows.length],
+    ["Договоров в основе", q((r) => r.contracts)],
+    ["Позиций на общей инфляции (нет отраслевого индекса)", rows.filter((r) => r.indexLevel === "cpi").length],
+    ["Позиций с 1–2 договорами (цена может быть случайной)", rows.filter((r) => r.contracts < 3).length],
+    ["Договоров, увеличенных допсоглашениями", q((r) => r.dsUp?.length ?? 0)],
+    ["Договоров длиннее года", q((r) => r.longContracts ?? 0)],
+    ["Договоров, действующих весь " + year + " год", q((r) => r.activeTarget ?? 0)],
+    ["Договоров, заключённых после " + baseYear + " года", q((r) => r.laterYear ?? 0)],
+    ["Позиций с ценой за весь лот", rows.filter((r) => r.lotPrice).length],
+    ["Позиций со ставкой НДС в файле не 22 % (применена 22 %)", rows.filter((r) => r.vatFile != null).length],
+    ["Позиций с ручной правкой цены", view.filter((v) => v.meta?.edited).length],
+  ];
+  const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
+  const td = "border-t py-1.5 pr-3";
+  return (
+    <>
+      <div>
+        <h2 className="text-xl font-semibold">Исходные данные расчёта</h2>
+        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>На каких цифрах построен прогноз {year}: показатели Минэкономразвития, индексы по отраслям, пересчёт Росстата и качество исходных данных.</p>
+      </div>
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Box title="Макропоказатели на прогнозный год">
+          <table className="w-full text-xs" style={NUM}>
+            <thead style={{ color: RC.muted }}><tr><th className={th}>Показатель</th><th className={`${th} text-right`}>Базовый</th><th className={`${th} text-right`}>Консерв.</th><th className={th}>Источник, загружен</th></tr></thead>
+            <tbody>
+              {macro.map(([l, b, c]) => (
+                <tr key={l}><td className={td} style={{ borderColor: RC.line }}>{l}</td>
+                  <td className={`${td} whitespace-nowrap text-right font-semibold`} style={{ borderColor: RC.line }}>{b ? fmtPct((b.value - 1) * 100) : "нет"}</td>
+                  <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{c ? fmtPct((c.value - 1) * 100) : "—"}</td>
+                  <td className={td} style={{ borderColor: RC.line, color: RC.ink2 }}>{b ? `${src(b.source_code)}, ${date(b)}${b.approved ? "" : " · не утверждён"}` : "не загружен"}</td></tr>
+              ))}
+              <tr><td className={td} style={{ borderColor: RC.line }}>Пересчёт внутри {baseYear} года (Росстат)</td>
+                <td colSpan={3} className={td} style={{ borderColor: RC.line, color: RC.ink2 }}>{lastMonth ? `цены договоров доведены до уровня: ${MONTHS[lastMonth - 1]} ${baseYear}` : "индексы не загружены — шаг пропущен"}</td></tr>
+              <tr><td className={td} style={{ borderColor: RC.line }}>НДС</td>
+                <td colSpan={3} className={td} style={{ borderColor: RC.line, color: RC.ink2 }}>22 % по умолчанию; другие ставки — только подтверждённые при загрузке</td></tr>
+            </tbody>
+          </table>
+        </Box>
+        <Box title="Качество исходных данных">
+          <table className="w-full text-xs" style={NUM}><tbody>
+            {quality.map(([l, n]) => (
+              <tr key={l}><td className={td} style={{ borderColor: RC.line }}>{l}</td><td className={`${td} text-right font-semibold`} style={{ borderColor: RC.line, color: n && !/^(Позиций в|Договоров в основе)/.test(l) ? RC.warn : RC.ink }}>{n.toLocaleString("ru-RU")}</td></tr>
+            ))}
+          </tbody></table>
+        </Box>
+      </div>
+      <Box title="Какие индексы применены">
+        <table className="w-full text-xs" style={NUM}>
+          <thead style={{ color: RC.muted }}><tr><th className={th}>Индекс</th><th className={`${th} text-right`}>Рост {year}</th><th className={`${th} text-right`}>Консерв.</th><th className={`${th} text-right`}>Позиций</th><th className={`${th} text-right`}>Договоров</th></tr></thead>
+          <tbody>{usedList.map((u) => (
+            <tr key={u.label}><td className={td} style={{ borderColor: RC.line }}>{u.label}</td>
+              <td className={`${td} text-right font-semibold`} style={{ borderColor: RC.line }}>{fmtPct((u.value - 1) * 100)}</td>
+              <td className={`${td} text-right`} style={{ borderColor: RC.line }}>{fmtPct((u.cons - 1) * 100)}</td>
+              <td className={`${td} text-right`} style={{ borderColor: RC.line }}>{u.n}</td>
+              <td className={`${td} text-right`} style={{ borderColor: RC.line }}>{u.contracts}</td></tr>
+          ))}</tbody>
+        </table>
+      </Box>
     </>
   );
 }
@@ -610,7 +728,7 @@ function DotPlot({ items, year, baseYear }: { items: ReturnType<typeof regionTab
     <div className="grid items-center gap-x-4 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_9.5rem]">
       <span className="hidden pb-1.5 text-[10.5px] uppercase tracking-wide sm:block" style={{ color: RC.muted }}>Предмет закупки</span>
       <div className="relative hidden h-4 text-[10px] sm:block" style={{ color: RC.muted }}>
-        {grid.map((t) => <span key={t} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ ...NUM, left: `${X(t)}%` }}>+{t}&nbsp;%</span>)}
+        {grid.map((t) => <span key={t} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ ...NUM, left: `${X(t)}%` }}>{t ? `на ${t}\u00a0%` : "дешевле всего"}</span>)}
       </div>
       <span className="hidden pb-1.5 text-right text-[10.5px] uppercase tracking-wide sm:block" style={{ color: RC.muted }}>Прогноз {year}</span>
       {rows.map((r) => {
@@ -628,9 +746,11 @@ function DotPlot({ items, year, baseYear }: { items: ReturnType<typeof regionTab
               <div className="absolute top-[21px] h-1 rounded-sm" style={{ left: 0, width: `${X(r.regs[last].d)}%`, background: RC.span }} />
               {r.regs.map((g, k) => {
                 const x = X(g.d);
-                const pos: "up" | "dn" = x - lastIn.up >= 15 ? "up" : x - lastIn.dn >= 15 ? "dn" : lastIn.up <= lastIn.dn ? "up" : "dn";
+                // Подписи «Регион на N % дороже» длинные — соседние разводим над и под линией с запасом
+                const GAP = 26;
+                const pos: "up" | "dn" = x - lastIn.up >= GAP ? "up" : x - lastIn.dn >= GAP ? "dn" : lastIn.up <= lastIn.dn ? "up" : "dn";
                 // Обе строки заняты рядом — подпись сдвигается вправо, точка остаётся на месте
-                const lx = Math.min(Math.max(x, lastIn[pos] + 15), 100);
+                const lx = Math.min(Math.max(x, lastIn[pos] + GAP), 100);
                 lastIn[pos] = lx;
                 const c = k === 0 ? RC.navy : k === last ? RC.violet : RC.blue;
                 const align = lx < 8 ? "translate-x-0" : lx > 88 ? "-translate-x-full" : "-translate-x-1/2";
@@ -639,7 +759,7 @@ function DotPlot({ items, year, baseYear }: { items: ReturnType<typeof regionTab
                     <span className="absolute top-[23px] -ml-[5.5px] -mt-[5.5px] h-[11px] w-[11px] rounded-full border-2 border-white" style={{ left: `${x}%`, background: c }}
                       data-tip={`${g.name}: ${rubShort(g.base)} → ${rubShort(g.fc)} за ${r.unit}${k ? `, на ${fmtNum(g.d, 0)} % выше минимума` : ", самая низкая цена"}`} />
                     <span className={`absolute hidden whitespace-nowrap text-[10px] sm:inline ${align} ${pos === "up" ? "top-[3px]" : "top-[30px]"}`} style={{ left: `${lx}%`, color: RC.ink2 }}>
-                      {shortRegion(g.name)}{k > 0 && <b style={{ color: RC.ink }}> +{fmtNum(g.d, 0)}%</b>}
+                      {shortRegion(g.name)}{k > 0 && <b style={{ color: RC.ink }}> на {fmtNum(g.d, 0)}% дороже</b>}
                     </span>
                   </span>
                 );
@@ -649,14 +769,14 @@ function DotPlot({ items, year, baseYear }: { items: ReturnType<typeof regionTab
               <span className="whitespace-nowrap">{rubShort(r.regs[0].fc)} – {rubShort(r.regs[last].fc)}</span>
               <small className="text-[10px]" style={{ color: RC.muted }}>{r.regs.length} {plural(r.regs.length, "регион", "региона", "регионов")}</small>
               <span className="mt-0.5 text-[11px] sm:hidden" style={{ color: RC.ink2 }}>
-                {r.regs.map((g, k) => <span key={g.name}>{k > 0 && " · "}{shortRegion(g.name)}{k > 0 ? <b style={{ color: RC.ink }}> +{fmtNum(g.d, 0)}%</b> : " — минимум"}</span>)}
+                {r.regs.map((g, k) => <span key={g.name}>{k > 0 && " · "}{shortRegion(g.name)}{k > 0 ? <b style={{ color: RC.ink }}> на {fmtNum(g.d, 0)}% дороже</b> : " — дешевле всего"}</span>)}
               </span>
             </div>
           </Row>
         );
       })}
       <span className="hidden sm:block" />
-      <p className="mt-1 text-[10px] sm:col-span-2" style={{ color: RC.muted }}>Шкала — на сколько прогноз {year} выше самой низкой цены по предмету; цены {baseYear} → {year} — при наведении на точку.</p>
+      <p className="mt-1 text-[10px] sm:col-span-2" style={{ color: RC.muted }}>Шкала — насколько цена в регионе выше, чем в самом дешёвом регионе; цены {baseYear} → {year} — при наведении на точку.</p>
     </div>
   );
 }

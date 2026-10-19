@@ -77,13 +77,15 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
   const [newVer, setNewVer] = useState(false);
   const [showIdx, setShowIdx] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
-  const [tab, setTabState] = useState<"forecast" | "report">("forecast");
-  useEffect(() => { if (new URLSearchParams(window.location.search).get("tab") === "report") setTabState("report"); }, []);
+  // report — отчёт для заказчиков, staff — для сотрудников (с суммами ГПЗ и исходными данными)
+  type Tab = "forecast" | "staff" | "report";
+  const [tab, setTabState] = useState<Tab>("forecast");
+  useEffect(() => { const t = new URLSearchParams(window.location.search).get("tab"); if (t === "report" || t === "staff") setTabState(t); }, []);
   // Вкладка — в адресе, фильтры при переключении сохраняются
-  const setTab = (t: "forecast" | "report") => {
+  const setTab = (t: Tab) => {
     setTabState(t);
     const p = new URLSearchParams(window.location.search);
-    if (t === "report") p.set("tab", "report"); else p.delete("tab");
+    if (t !== "forecast") p.set("tab", t); else p.delete("tab");
     window.history.replaceState(null, "", p.toString() ? `?${p}` : window.location.pathname);
     window.scrollTo({ top: 0 });
   };
@@ -148,7 +150,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
 
   return (
     <div className="space-y-4">
-      <Breadcrumbs items={[{ label: "Прогнозы", href: "/" }, { label: f.title }, { label: tab === "report" ? "Отчёт" : "Прогноз" }]} />
+      <Breadcrumbs items={[{ label: "Прогнозы", href: "/" }, { label: f.title }, { label: tab === "report" ? "Отчёт для заказчиков" : tab === "staff" ? "Отчёт для сотрудников" : "Прогноз" }]} />
       <div className="card space-y-3 print:hidden">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -179,10 +181,10 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           </div>
         </div>
 
-        <div className="-mb-1 flex gap-1 border-b border-slate-200">
-          {([["forecast", "Прогноз"], ["report", "Отчёт"]] as const).map(([k, l]) => (
+        <div className="-mb-1 flex gap-1 overflow-x-auto border-b border-slate-200">
+          {([["forecast", "Прогноз"], ["staff", "Отчёт для сотрудников"], ["report", "Отчёт для заказчиков"]] as const).map(([k, l]) => (
             <button key={k} type="button" onClick={() => setTab(k)}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium transition ${tab === k ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>{l}</button>
+              className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition ${tab === k ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>{l}</button>
           ))}
         </div>
 
@@ -207,8 +209,8 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         {msg && <p className="text-sm text-slate-700">{msg}</p>}
       </div>
 
-      {tab === "report" && reference && (
-        <ForecastReport view={view} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
+      {(tab === "report" || tab === "staff") && reference && (
+        <ForecastReport key={tab} audience={tab === "staff" ? "staff" : "customer"} view={view} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
           approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null} />
       )}
       {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
