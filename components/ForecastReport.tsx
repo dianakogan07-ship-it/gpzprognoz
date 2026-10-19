@@ -185,7 +185,6 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
         ...[...used.values()].sort((a, b) => Number(b[3]) - Number(a[3])),
       ], [50, 16, 18, 10]);
     }
-    add("Надёжность", [...head, [money.byWeight ? "Источник цены (доля суммы)" : "Источник цены (доля позиций)", "%"], ...money.trust.map((t) => [t.label, p1(t.v)])], [50, 10]);
     add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
     const { downloadWorkbook } = await import("@/lib/excel");
     downloadWorkbook(wb, `Внутренний отчёт — прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "));
@@ -287,7 +286,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
               <MoneySheet part="basis" view={slice} year={year} baseYear={baseYear} shortCat={shortCat} growth={total.total} cpi={cpi} cpiSource={cpiSource} />
             </Sheet>
             <Sheet><AttentionSheet view={slice} excluded={excluded} year={year} baseYear={baseYear} /></Sheet>
-            <Sheet><ChangesSheet forecastId={forecastId} curVersionId={versionId} prevVersionId={prevVersion?.id ?? null} prevNumber={prevVersion?.number ?? null} /></Sheet>
+            <FactSheet forecastId={forecastId} />
           </>}
         </div>
       )}
@@ -361,7 +360,7 @@ function dataNotes(view: ViewRow[], year: number, baseYear: number) {
   return [
     ...m.ds.map((d) => `${d.key || "Без категории"}: ${d.n} ${plural(d.n, "договор увеличен", "договора увеличены", "договоров увеличены")} допсоглашениями в среднем на ${fmtNum(d.avg)} % к предложению победителя — цена за единицу может быть завышена`),
     m.active ? `${m.active} ${plural(m.active, "договор действует", "договора действуют", "договоров действуют")} весь ${year} год — по ним закупка может не понадобиться` : "",
-    m.long ? `${m.long} ${plural(m.long, "договор", "договора", "договоров")} длиннее года: цена отнесена к середине срока; в новой закупке на несколько лет учтите рост цен следующих лет` : "",
+    m.long ? `${m.long} ${plural(m.long, "договор", "договора", "договоров")} длиннее года: месяцы следующего года учтены по новой цене; в новой закупке на несколько лет учтите рост цен следующих лет` : "",
     m.later ? `${m.later} ${plural(m.later, "договор заключён", "договора заключены", "договоров заключены")} после ${baseYear} года — без пересчёта внутри года` : "",
     m.lots ? `${m.lots} ${plural(m.lots, "позиция", "позиции", "позиций")} с ценой за весь лот (количество 1)` : "",
   ].filter(Boolean);
@@ -449,16 +448,6 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
   );
   return (
     <>
-      <div className="grid gap-3">
-        <Box title={`Надёжность расчёта${m.byWeight ? " — доля суммы" : " — доля позиций"}`}>
-          <div className="flex h-4 overflow-hidden rounded" style={{ background: RC.track }}>
-            {m.trust.filter((t) => t.v > 0).map((t) => <div key={t.label} style={{ width: `${t.v}%`, background: t.c }} data-tip={`${t.label}: ${fmtNum(t.v)} %`} />)}
-          </div>
-          <ul className="mt-3 space-y-1 text-xs" style={{ color: RC.ink2 }}>
-            {m.trust.map((t) => <li key={t.label} className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: t.c }} /><span className="flex-1">{t.label}</span><b style={{ ...NUM, color: RC.ink }}>{fmtNum(t.v)} %</b></li>)}
-          </ul>
-        </Box>
-      </div>
       {m.nmc && (
         <Box title="НМЦ и экономия на торгах">
           <div className="grid gap-3 text-xs sm:grid-cols-3" style={NUM}>
@@ -475,44 +464,24 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
 
 const PRICE_ROWS = 22;
 
-type CompareResp = { rows: { subject: string; region: string | null; unit: string; a: number | null; b: number | null; deltaPct: number | null }[]; total: { common: number; changed: number; onlyA: number; onlyB: number; growth: number | null } };
 type FactResp = { matched: number; accuracy: number | null; mape: number | null; rows: { subject: string; region: string | null; unit: string; forecast: number; actual: number; errorPct: number | null }[] };
 
-/** Что изменилось к прошлой версии и насколько прогноз совпал с фактом — для сотрудников */
-function ChangesSheet({ forecastId, prevVersionId, curVersionId, prevNumber }: { forecastId: number; prevVersionId: number | null; curVersionId: number; prevNumber: number | null }) {
-  const [cmp, setCmp] = useState<CompareResp | null>(null);
+/** Насколько прогноз совпал с фактом — лист появляется, только когда факт загружен */
+function FactSheet({ forecastId }: { forecastId: number }) {
   const [fact, setFact] = useState<FactResp | null>(null);
   useEffect(() => {
-    if (prevVersionId) fetch(`/api/forecasts/compare?a=${prevVersionId}&b=${curVersionId}&changed=1`).then((r) => r.json()).then((j) => !j.error && setCmp(j)).catch(() => null);
     fetch(`/api/forecasts/${forecastId}/actuals`).then((r) => r.json()).then((j) => !j.error && setFact(j)).catch(() => null);
-  }, [forecastId, prevVersionId, curVersionId]);
-  const th = "py-1.5 pr-3 text-left text-[10.5px] font-medium uppercase tracking-wide";
+  }, [forecastId]);
+  if (!fact?.matched) return null;
   const td = "border-t py-1.5 pr-3";
   return (
-    <>
+    <Sheet>
       <div>
-        <h2 className="text-xl font-semibold">Что изменилось и насколько точен прогноз</h2>
-        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Сравнение с прошлой версией прогноза и с фактическими ценами, если факт загружен.</p>
+        <h2 className="text-xl font-semibold">Насколько точен прогноз</h2>
+        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Сравнение прогноза с ценами договоров, заключённых в прогнозном году.</p>
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
-        <Box title={prevNumber ? `К версии ${prevNumber}` : "К прошлой версии"}>
-          {!prevVersionId ? <p className="text-xs" style={{ color: RC.muted }}>Это первая версия прогноза — сравнивать не с чем.</p> : !cmp ? <p className="text-xs" style={{ color: RC.muted }}>Загрузка…</p> : (
-            <>
-              <p className="text-xs" style={{ color: RC.ink2 }}>Изменились {cmp.total.changed} из {cmp.total.common} позиций{cmp.total.onlyB ? `, новых — ${cmp.total.onlyB}` : ""}{cmp.total.onlyA ? `, выбыло — ${cmp.total.onlyA}` : ""}.{cmp.total.growth != null ? ` Прогнозные цены по общим позициям: ${fmtPct(cmp.total.growth)} к прошлой версии.` : ""}</p>
-              {cmp.total.changed > 0 && <table className="mt-2 w-full text-xs" style={NUM}>
-                <thead style={{ color: RC.muted }}><tr><th className={th}>Позиция</th><th className={`${th} text-right`}>Было</th><th className={`${th} text-right`}>Стало</th><th className={`${th} text-right`}>Изм.</th></tr></thead>
-                <tbody>{cmp.rows.filter((r) => r.a != null && r.b != null).slice(0, 12).map((r, i) => (
-                  <tr key={i}><td className={td} style={{ borderColor: RC.line }}>{r.subject}<span className="block text-[10px]" style={{ color: RC.muted }}>{r.region ?? ""} · {r.unit}</span></td>
-                    <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{rubShort(r.a!)}</td>
-                    <td className={`${td} whitespace-nowrap text-right font-semibold`} style={{ borderColor: RC.line }}>{rubShort(r.b!)}</td>
-                    <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{r.deltaPct != null ? fmtPct(r.deltaPct) : "—"}</td></tr>
-                ))}</tbody>
-              </table>}
-            </>
-          )}
-        </Box>
         <Box title="Точность по факту">
-          {!fact || !fact.matched ? <p className="text-xs" style={{ color: RC.muted }}>Факт ещё не загружен. Когда в прогнозном году появятся договоры, загрузите их в меню «⋯» прогноза — здесь появится, насколько прогноз совпал с реальными ценами.</p> : (
+          {(
             <>
               <p className="text-2xl font-semibold" style={NUM}>{fact.accuracy != null ? `${fmtNum(fact.accuracy)} %` : "—"}</p>
               <p className="text-xs" style={{ color: RC.ink2 }}>точность по {fact.matched} {plural(fact.matched, "позиции", "позициям", "позициям")}; средняя ошибка {fact.mape != null ? `${fmtNum(fact.mape)} %` : "—"}. Самые большие расхождения:</p>
@@ -525,8 +494,7 @@ function ChangesSheet({ forecastId, prevVersionId, curVersionId, prevNumber }: {
             </>
           )}
         </Box>
-      </div>
-    </>
+    </Sheet>
   );
 }
 
@@ -674,29 +642,15 @@ function InputsSheet({ view, reference, year, baseYear }: { view: ViewRow[]; ref
     e.n++; e.contracts += r.contracts; used.set(k, e);
   }
   const usedList = [...used.values()].sort((a, b) => b.n - a.n);
-  const q = (pred: (r: ForecastRow) => number) => rows.reduce((s, r) => s + pred(r), 0);
-  const quality: [string, number][] = [
-    ["Позиций в прогнозе", rows.length],
-    ["Договоров в основе", q((r) => r.contracts)],
-    ["Позиций на общей инфляции (нет отраслевого индекса)", rows.filter((r) => r.indexLevel === "cpi").length],
-    ["Позиций с 1–2 договорами (цена может быть случайной)", rows.filter((r) => r.contracts < 3).length],
-    ["Договоров, увеличенных допсоглашениями", q((r) => r.dsUp?.length ?? 0)],
-    ["Договоров длиннее года", q((r) => r.longContracts ?? 0)],
-    ["Договоров, действующих весь " + year + " год", q((r) => r.activeTarget ?? 0)],
-    ["Договоров, заключённых после " + baseYear + " года", q((r) => r.laterYear ?? 0)],
-    ["Позиций с ценой за весь лот", rows.filter((r) => r.lotPrice).length],
-    ["Позиций со ставкой НДС в файле не 22 % (применена 22 %)", rows.filter((r) => r.vatFile != null).length],
-    ["Позиций с ручной правкой цены", view.filter((v) => v.meta?.edited).length],
-  ];
   const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
   const td = "border-t py-1.5 pr-3";
   return (
     <>
       <div>
         <h2 className="text-xl font-semibold">Исходные данные расчёта</h2>
-        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>На каких цифрах построен прогноз {year}: показатели Минэкономразвития, индексы по отраслям, пересчёт Росстата и качество исходных данных.</p>
+        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>На каких цифрах построен прогноз {year}: показатели Минэкономразвития, индексы по отраслям, пересчёт Росстата.</p>
       </div>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div>
         <Box title="Макропоказатели на прогнозный год">
           <table className="w-full text-xs" style={NUM}>
             <thead style={{ color: RC.muted }}><tr><th className={th}>Показатель</th><th className={`${th} text-right`}>Базовый</th><th className={`${th} text-right`}>Консерв.</th><th className={th}>Источник, загружен</th></tr></thead>
@@ -713,13 +667,6 @@ function InputsSheet({ view, reference, year, baseYear }: { view: ViewRow[]; ref
                 <td colSpan={3} className={td} style={{ borderColor: RC.line, color: RC.ink2 }}>22 % по умолчанию; другие ставки — только подтверждённые при загрузке</td></tr>
             </tbody>
           </table>
-        </Box>
-        <Box title="Качество исходных данных">
-          <table className="w-full text-xs" style={NUM}><tbody>
-            {quality.map(([l, n]) => (
-              <tr key={l}><td className={td} style={{ borderColor: RC.line }}>{l}</td><td className={`${td} text-right font-semibold`} style={{ borderColor: RC.line, color: n && !/^(Позиций в|Договоров в основе)/.test(l) ? RC.warn : RC.ink }}>{n.toLocaleString("ru-RU")}</td></tr>
-            ))}
-          </tbody></table>
         </Box>
       </div>
       <Box title="Какие индексы применены">
