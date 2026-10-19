@@ -29,7 +29,6 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
   year: number; baseYear: number; approved: boolean; approvedAt: string | null; title: string;
   forecastId: number; versionId: number; prevVersion: { id: number; number: number } | null; excluded: ExcludedRow[];
 }) {
-  const [q, setQ] = useState("");
   const { f, set } = filters;
   const slice = useMemo(() => filterRows(view, { ...EMPTY_FILTERS, category: f.category, region: f.region }), [view, f.category, f.region]);
   const rows = useMemo(() => slice.map((v) => v.row), [slice]);
@@ -44,17 +43,10 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
   const shortCat = (name: string) => reference.categories.find((c) => c.name === name)?.short_name || name || "Без категории";
   const cats = useMemo(() => groupSplit(rows, (r) => r.category ?? ""), [rows]);
   const subjects = useMemo(() => groupSplit(rows, (r) => r.subject), [rows]);
-  // Разница между регионами — по всем регионам (с учётом только фильтра категорий), выбранные регионы подсвечиваются
-  const regionRows = useMemo(() => filterRows(view, { ...EMPTY_FILTERS, category: f.category }).map((v) => v.row), [view, f.category]);
-  const mine = useMemo(() => new Set(view.filter((v) => f.region.includes(regionKey(v.row))).map((v) => v.row.regionName ?? v.row.region ?? "")), [view, f.region]);
-  const regions = useMemo(() => regionTable(regionRows).filter((x) => !mine.size || x.regs.some((g) => mine.has(g.name))), [regionRows, mine]);
-  const multi = regions.filter((x) => x.regs.length >= 2);
-  const single = regions.filter((x) => x.regs.length === 1);
 
   // Сравнение с инфляцией — по округлённым до 0,1 значениям, как они показаны
   const r1 = (v: number) => Math.round(v * 10) / 10;
   const above = cpi == null ? 0 : subjects.filter((g) => r1(g.total) > r1(cpi)).length;
-  const equal = cpi == null ? 0 : subjects.filter((g) => r1(g.total) === r1(cpi)).length;
   const top = subjects[0];
   // Доля суммы ГПЗ у предметов дороже инфляции: 8 мелких и 8 крупных предметов — разные ситуации
   const totalSum = rows.reduce((s, r) => s + (sumBase(r) ?? 0), 0);
@@ -92,6 +84,29 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
       XLSX.utils.book_append_sheet(wb, ws, name);
     };
     const p1 = (v: number) => Math.round(v * 10) / 10;
+    const m3 = (pct: number) => Math.round((1 + pct / 100) * 1000) / 1000;
+    const rateRows = (gs: { key: string; total: number; rows: ForecastRow[] }[], ex: boolean) => gs.map((g) => {
+      const n = g.rows.reduce((s, r) => s + r.contracts, 0);
+      return [g.key || "Без категории", ...(ex ? [[...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 3).join("; ")] : []), p1(g.total), m3(g.total), n, reliability(n).text];
+    });
+    if (audience === "customer") {
+      const headC = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Рост к ценам договоров ${baseYear}, базовый сценарий МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
+      add("Сводка", [...headC,
+        ["Показатель", "Значение"],
+        [`Средний рост цен в ${year}, %`, p1(total.total)],
+        [`Множитель к сумме закупки ${baseYear}`, m3(total.total)],
+        ...(cpi != null ? [[`Общая инфляция, прогноз ${cpiSource}, %`, p1(cpi)]] : []),
+        [],
+        ["Как применить: сумма закупки " + baseYear + " × множитель = ориентир на " + year + ". Проценты одинаковы для сумм с НДС и без НДС."],
+      ], [60, 14]);
+      add("Рост по категориям", [...headC, ["Категория", "Рост, %", "Множитель", "Договоров", "Надёжность"], ...rateRows(cats, false)], [48, 10, 12, 12, 14]);
+      add("Рост по направлениям", [...headC, ["Направление", "Примеры закупок", "Рост, %", "Множитель", "Договоров", "Надёжность"], ...rateRows(subjects, true)], [50, 60, 10, 12, 12, 14]);
+      add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
+      const { downloadWorkbook } = await import("@/lib/excel");
+      const regs = f.region.map((k) => counts.reg.get(k)?.label ?? k);
+      downloadWorkbook(wb, `Прогноз цен ${year} — ${title}${regs.length && regs.length <= 3 ? ` — ${regs.join(", ")}` : ""}${approved ? "" : " (не утверждён)"}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "));
+      return;
+    }
     const head = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Расчёт по базовому сценарию МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
     add("Сводка", [...head,
       ["Показатель", "Значение", "Ед."],
@@ -111,7 +126,8 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
       ["Категория", `Рост цен в ${baseYear}, п.п.`, `Рост в ${year}, п.п.`, "Итого рост, %"],
       ...cats.map((c) => [c.key || "Без категории", p1(c.intra), p1(c.industry), p1(c.total)]),
     ], [48, 18, 20, 14]);
-    add("Рост по предметам", [...head,
+    add("Рост по направлениям", [...head, ["Направление", "Примеры закупок", "Рост, %", "Множитель", "Договоров", "Надёжность"], ...rateRows(subjects, true)], [50, 60, 10, 12, 12, 14]);
+    add("Рост по предметам (п.п.)", [...head,
       ["Предмет закупки", `Рост цен в ${baseYear}, п.п.`, `Рост в ${year}, п.п.`, "Итого рост, %"],
       ...subjects.map((g) => [g.key, p1(g.intra), p1(g.industry), p1(g.total)]),
     ], [60, 18, 20, 14]);
@@ -171,7 +187,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
     add("Надёжность", [...head, [money.byWeight ? "Источник цены (доля суммы)" : "Источник цены (доля позиций)", "%"], ...money.trust.map((t) => [t.label, p1(t.v)])], [50, 10]);
     add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
     const { downloadWorkbook } = await import("@/lib/excel");
-    downloadWorkbook(wb, `Отчёт — прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "));
+    downloadWorkbook(wb, `Внутренний отчёт — прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "));
   }
   async function downloadPdf() {
     setPdfBusy(true);
@@ -185,7 +201,6 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
     setPdfBusy(false);
   }
 
-  const legend = <Legend year={year} baseYear={baseYear} cpi={cpi} />;
 
   return (
     <div className="report space-y-4" style={{ color: RC.ink }}
@@ -207,111 +222,71 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <input className="inp w-72 max-w-full py-1.5" placeholder="Найти предмет или регион в таблице цен" value={q} onChange={(e) => setQ(e.target.value)} />
-        {audience === "customer" && (
-          <span className="text-xs" style={{ color: RC.ink2 }}>{f.region.length
-            ? `Отчёт для региона: ${f.region.map((k) => counts.reg.get(k)?.label ?? k).join(", ")} — цены только по нему, на графике регионов он подсвечен`
-            : "Чтобы выгрузить отчёт для одного заказчика, выберите его регион в фильтре «Регион» — в PDF попадут цены только по этому региону"}</span>
-        )}
-      </div>
+      {audience === "customer" && (
+        <p className="text-xs" style={{ color: RC.ink2 }}>{f.region.length
+          ? `Отчёт для региона: ${f.region.map((k) => counts.reg.get(k)?.label ?? k).join(", ")} — проценты посчитаны только по закупкам этого региона.`
+          : "Чтобы выгрузить отчёт для одного заказчика, выберите его регион в фильтре «Регион» — проценты будут посчитаны по закупкам только этого региона."}</p>
+      )}
       {!rows.length ? <div className="card text-sm" style={{ color: RC.muted }}>В выбранном срезе нет позиций.</div> : (
         <div ref={rootRef} className="space-y-6">
-          {/* Лист 1. Сводка */}
-          <Sheet>
-            <div>
-              <h2 className="text-xl font-semibold">Прогноз цен {year}</h2>
-              <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>
-                {title} · {sliceText} · база: договоры {baseYear}, цены без НДС · расчёт по базовому сценарию МЭР{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""}
-              </p>
-              {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
-            </div>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-              {/* Итог — тем же цветом, что столбик «Прогноз» на водопаде, а не цена договоров */}
-              <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.violet }}>
-                <p className="text-xs text-white/75">Средний рост цен в {year}</p>
-                <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(total.total)}</p>
-                <p className="text-[11.5px] text-white/75">{cpi != null ? `инфляция, прогноз ${cpiSource}: ${fmtPct(cpi)}` : "прогноза инфляции в базе нет"}</p>
+          {audience === "customer" ? <>
+            {/* Заказчику: на сколько увеличить сумму закупки — по категориям и направлениям */}
+            <Sheet>
+              <div>
+                <h2 className="text-xl font-semibold">На сколько увеличить бюджет закупок в {year} году</h2>
+                <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>
+                  {title} · {sliceText} · рост к ценам договоров {baseYear} года · расчёт по базовому сценарию МЭР{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""}
+                </p>
+                {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
               </div>
-              {cpi != null && <Kpi label="Дороже инфляции" value={<>{above} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>из {subjects.length}</small></>}
-                note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %${aboveShare != null && showMoney ? ` — это ${fmtNum(aboveShare, 0)} % суммы ГПЗ` : ""}`} />}
-              {top && <Kpi label="Максимальный рост" value={fmtPct(top.total)} note={top.key} />}
-            </div>
-            {audience === "customer" && <HowTo>Средний рост — на сколько процентов в {year} году вырастет цена закупки по сравнению с ценой договоров {baseYear} года. Рост складывается из двух частей: голубая — цены, которые уже выросли в {baseYear} году после заключения договоров (данные Росстата), синяя — ожидаемый рост в {year} году (прогноз Минэкономразвития). Пунктирная линия — общая инфляция: всё, что правее неё, дорожает быстрее инфляции.</HowTo>}
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+                <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.violet }}>
+                  <p className="text-xs text-white/75">Средний рост цен в {year}</p>
+                  <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(total.total)}</p>
+                  <p className="text-[11.5px] text-white/75">умножьте сумму {baseYear} на {fmtMult(total.total)}</p>
+                </div>
+                <Kpi label="Общая инфляция" value={cpi != null ? fmtPct(cpi) : "—"} note={cpi != null ? `прогноз ${cpiSource} на ${year}` : "прогноза нет"} />
+                {cpi != null && <Kpi label="Дороже инфляции" value={<>{above} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>из {subjects.length}</small></>} note="направлений растут быстрее инфляции" />}
+              </div>
+              <div className="rounded-lg px-4 py-3 text-xs leading-relaxed" style={{ background: RC.bg, color: RC.ink2 }}>
+                <p className="font-semibold" style={{ color: RC.ink }}>Как применить</p>
+                <p className="mt-0.5">Найдите своё направление ниже и умножьте сумму закупки {baseYear} года на множитель. Например, закупка на 10 млн ₽ при росте {fmtPct(total.total)} — в {year} году ≈ {fmtMoney(10_000_000 * (1 + total.total / 100))}. Проценты одинаковы для сумм с НДС и без НДС. Договор на несколько лет — на каждый следующий год добавьте рост цен по прогнозу инфляции.</p>
+              </div>
+              {cats.length > 0 && <Box title="Рост цен по категориям закупок"><RateTable year={year} baseYear={baseYear} cpi={cpi} groups={cats.map((c) => ({ key: c.key, label: shortCat(c.key), total: c.total, rows: c.rows }))} /></Box>}
+            </Sheet>
+            {chunk(subjects, 16).map((part, i, all) => (
+              <Sheet key={i}>
+                <div>
+                  <h2 className="text-xl font-semibold">Рост цен по направлениям закупок{all.length > 1 ? ` · ${i + 1} из ${all.length}` : ""}</h2>
+                  <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Направление — вид товаров и услуг. Под названием — примеры закупок из плана. Сверху — направления с самым большим ростом.</p>
+                </div>
+                <RateTable year={year} baseYear={baseYear} cpi={cpi} examples groups={part.map((g) => ({ key: g.key, label: g.key, total: g.total, rows: g.rows }))} />
+                {i === all.length - 1 && sources.length > 0 && (
+                  <p className="text-[10.5px]" style={{ color: RC.muted }}>Источники:{" "}
+                    {sources.map((s, k) => <span key={s.code}>{k > 0 && " · "}<a href={s.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: RC.blue }}>{s.name}</a></span>)}</p>
+                )}
+              </Sheet>
+            ))}
+          </> : <>
+            {/* Сотруднику: итог в рублях, на чём построен расчёт, что проверить, что изменилось */}
+            <Sheet>
+              <div>
+                <h2 className="text-xl font-semibold">Итог: ГПЗ {baseYear} → потребность {year}</h2>
+                <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>
+                  {title} · {sliceText} · расчёт по базовому сценарию МЭР{approvedAt ? ` · утверждён ${new Date(approvedAt).toLocaleDateString("ru-RU")}` : ""}
+                </p>
+                {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
+              </div>
+              <MoneySheet part="summary" view={slice} year={year} baseYear={baseYear} shortCat={shortCat} growth={total.total} cpi={cpi} cpiSource={cpiSource} />
+            </Sheet>
+            <Sheet>
+              <InputsSheet view={slice} reference={reference} year={year} baseYear={baseYear} />
               <Box title="Из чего складывается рост"><Waterfall split={total} year={year} baseYear={baseYear} lastMonth={lastMonth} /></Box>
-              {cats.length > 0 && (
-                <Box title="Рост по категориям">
-                  {legend}
-                  <StackedBars groups={cats.map((c) => ({ ...c, label: shortCat(c.key), full: c.key || "Без категории" }))} cpi={cpi} year={year} baseYear={baseYear} parts labelWidth="7rem" />
-                </Box>
-              )}
-            </div>
-          </Sheet>
-
-          <PriceSheets view={slice} audience={audience} year={year} baseYear={baseYear} reference={reference} q={q} />
-
-          {/* Лист 2. Предметы закупки */}
-          <Sheet>
-            <div>
-              <h2 className="text-xl font-semibold">Рост по предмету закупки</h2>
-              <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>По убыванию прогноза роста. Полное название и вклад каждого фактора — при наведении.</p>
-            </div>
-            {audience === "customer" && <HowTo>Каждая строка — предмет закупки. Длина полосы — на сколько процентов вырастет его цена в {year} году к цене договоров {baseYear} года. Голубая часть — рост, который уже произошёл в {baseYear} году, синяя — ожидаемый рост в {year} году. Пунктир — общая инфляция. Сверху — предметы с самым большим ростом.</HowTo>}
-            {cpi != null && <Strip above={above} equal={equal} below={subjects.length - above - equal} cpi={cpi} />}
-            <div className="-mt-2">
-              <Legend year={year} baseYear={baseYear} cpi={cpi} extra={cpi != null && equal > 0
-                ? <span className="inline-flex items-center gap-1"><Flag />рост ровно на уровне инфляции — стоит проверить источник индекса</span> : null} />
-            </div>
-            <ItemColumns groups={subjects} cpi={cpi} year={year} baseYear={baseYear} />
-          </Sheet>
-
-          {/* Лист 3. Регионы */}
-          <Sheet>
-            <div>
-              <h2 className="text-xl font-semibold">Разница цен между регионами</h2>
-              <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Один и тот же предмет закупки в разных регионах стоит по-разному. Это не рост цен, а разница между регионами в {year} году. Ориентир берите по своему региону. Цены без НДС.</p>
-              <p className="mt-2 rounded-lg px-3 py-2 text-xs" style={{ background: RC.bg, color: RC.ink2 }}>
-                <b style={{ color: RC.ink }}>Как читать.</b> Каждая строка — один предмет закупки. Левая точка — регион, где он дешевле всего. Остальные точки — насколько в других регионах дороже: «СПб на 77 % дороже» значит, что в Санкт-Петербурге прогнозная цена в 1,77 раза выше, чем в самом дешёвом регионе. Рост цен на {year} год — на первом листе отчёта.
-              </p>
-            </div>
-            {multi.length > 0 ? <>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]" style={{ color: RC.ink2 }}>
-                <span className="inline-flex items-center gap-1.5"><Dot c={RC.navy} />регион, где дешевле всего</span>
-                <span className="inline-flex items-center gap-1.5"><Dot c={RC.blue} />другие регионы</span>
-                <span className="inline-flex items-center gap-1.5"><Dot c={RC.violet} />регион, где дороже всего</span>
-              </div>
-              <DotPlot items={multi} year={year} baseYear={baseYear} mine={mine} />
-            </> : <p className="text-sm" style={{ color: RC.muted }}>В срезе нет предметов, которые закупаются в двух и более регионах — сравнивать не с чем.</p>}
-            {single.length > 0 && (
-              <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2 }}>
-                <p className="font-semibold" style={{ color: RC.ink }}>Закупались только в одном регионе — сравнить не с чем</p>
-                <p className="mt-0.5">Эти предметы закупались только в одном регионе, поэтому сравнить цену с другими регионами нельзя. Прогнозная цена {year} — ниже, рост цен — на листе «Рост по предмету закупки».</p>
-                <table className="mt-2 w-full" style={NUM}>
-                  <thead style={{ color: RC.muted }}><tr><th className="py-1 pr-3 text-left font-medium">Предмет закупки</th><th className="py-1 pr-3 text-left font-medium">Регион</th><th className="py-1 text-right font-medium">Прогноз {year}, без НДС</th></tr></thead>
-                  <tbody>{single.map((x) => (
-                    <tr key={`${x.okpd2}|${x.unit}`} className="border-t" style={{ borderColor: RC.line }}>
-                      <td className="py-1 pr-3">{x.subject}</td>
-                      <td className="py-1 pr-3">{shortRegion(x.regs[0].name)}</td>
-                      <td className="whitespace-nowrap py-1 text-right">{rubShort(x.regs[0].fc)} за {x.unit}</td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            )}
-            {sources.length > 0 && (
-              <p className="text-[10.5px]" style={{ color: RC.muted }}>
-                Источники:{" "}
-                {sources.map((s, i) => <span key={s.code}>{i > 0 && " · "}<a href={s.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: RC.blue }}>{s.name}</a></span>)}
-              </p>
-            )}
-          </Sheet>
-
-          {/* Лист 4. Деньги и надёжность расчёта */}
-          {showMoney && <Sheet><MoneySheet view={slice} year={year} baseYear={baseYear} shortCat={shortCat} /></Sheet>}
-          {audience === "staff" && <Sheet><InputsSheet view={slice} reference={reference} year={year} baseYear={baseYear} /></Sheet>}
-          {audience === "staff" && <Sheet><AttentionSheet view={slice} excluded={excluded} /></Sheet>}
-          {audience === "staff" && <Sheet><ChangesSheet forecastId={forecastId} curVersionId={versionId} prevVersionId={prevVersion?.id ?? null} prevNumber={prevVersion?.number ?? null} /></Sheet>}
+              <MoneySheet part="basis" view={slice} year={year} baseYear={baseYear} shortCat={shortCat} growth={total.total} cpi={cpi} cpiSource={cpiSource} />
+            </Sheet>
+            <Sheet><AttentionSheet view={slice} excluded={excluded} year={year} baseYear={baseYear} /></Sheet>
+            <Sheet><ChangesSheet forecastId={forecastId} curVersionId={versionId} prevVersionId={prevVersion?.id ?? null} prevNumber={prevVersion?.number ?? null} /></Sheet>
+          </>}
         </div>
       )}
 
@@ -378,31 +353,45 @@ export function moneyData(view: ViewRow[]) {
   };
 }
 
-function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year: number; baseYear: number; shortCat: (n: string) => string }) {
+/** Замечания к исходным договорам — общие для листов сотрудника */
+function dataNotes(view: ViewRow[], year: number, baseYear: number) {
   const m = moneyData(view);
-  const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
-  const td = "border-t py-1.5 pr-3";
-  const qMax = Math.max(1, ...m.quarters);
-  const notes = [
+  return [
     ...m.ds.map((d) => `${d.key || "Без категории"}: ${d.n} ${plural(d.n, "договор увеличен", "договора увеличены", "договоров увеличены")} допсоглашениями в среднем на ${fmtNum(d.avg)} % к предложению победителя — цена за единицу может быть завышена`),
     m.active ? `${m.active} ${plural(m.active, "договор действует", "договора действуют", "договоров действуют")} весь ${year} год — по ним закупка может не понадобиться` : "",
     m.long ? `${m.long} ${plural(m.long, "договор", "договора", "договоров")} длиннее года: цена отнесена к середине срока; в новой закупке на несколько лет учтите рост цен следующих лет` : "",
     m.later ? `${m.later} ${plural(m.later, "договор заключён", "договора заключены", "договоров заключены")} после ${baseYear} года — без пересчёта внутри года` : "",
-    m.lots ? `${m.lots} ${plural(m.lots, "позиция", "позиции", "позиций")} с ценой за весь лот (количество 1) — в сравнении регионов не участвуют` : "",
+    m.lots ? `${m.lots} ${plural(m.lots, "позиция", "позиции", "позиций")} с ценой за весь лот (количество 1)` : "",
   ].filter(Boolean);
-  return (
+}
+
+/**
+ * Деньги для сотрудника. summary — сумма ГПЗ и потребность по категориям, топ-10, кварталы;
+ * basis — надёжность расчёта и НМЦ
+ */
+function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSource }: {
+  part: "summary" | "basis"; view: ViewRow[]; year: number; baseYear: number; shortCat: (n: string) => string; growth: number; cpi: number | null; cpiSource: string;
+}) {
+  const m = moneyData(view);
+  const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
+  const td = "border-t py-1.5 pr-3";
+  const qMax = Math.max(1, ...m.quarters);
+
+  if (part === "summary") return (
     <>
-      <div>
-        <h2 className="text-xl font-semibold">Сумма закупок и надёжность расчёта</h2>
-        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Сумма — цена за единицу × количество из ГПЗ {baseYear}, без НДС. Для {year} объём принят таким же, как в {baseYear}.</p>
-      </div>
-      {!m.hasSums ? <p className="text-sm" style={{ color: RC.muted }}>В этой версии не сохранено количество — суммы появятся после повторной загрузки файлов ГПЗ и отчётности.</p> : <>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-          <Kpi label={`Сумма ГПЗ ${baseYear}`} value={fmtMoney(m.base)} note="по ценам договоров" />
+      {!m.hasSums ? <p className="text-sm" style={{ color: RC.muted }}>В этой версии не сохранено количество — суммы появятся после повторной загрузки файлов ГПЗ и отчётности. Средний рост цен: {fmtPct(growth)}.</p> : <>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.violet }}>
+            <p className="text-xs text-white/75">Рост цен в {year}</p>
+            <p className="my-0.5 text-2xl font-bold" style={NUM}>{fmtPct(growth)}</p>
+            <p className="text-[11.5px] text-white/75">{cpi != null ? `инфляция, прогноз ${cpiSource}: ${fmtPct(cpi)}` : "прогноза инфляции нет"}</p>
+          </div>
+          <Kpi label={`Сумма ГПЗ ${baseYear}`} value={fmtMoney(m.base)} note="по ценам договоров, без НДС" />
           <Kpi label={`Потребность ${year}`} value={m.cons ? <>{fmtMoney(m.fc)} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>– {fmtMoney(m.fcCons)}</small></> : fmtMoney(m.fc)}
             note={m.cons ? `базовый ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)} – консервативный ${fmtPct(m.base ? (m.fcCons / m.base - 1) * 100 : 0)} сценарий МЭР` : `по прогнозным ценам, ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)}`} />
           <Kpi label="Прирост" value={fmtMoney(m.fc - m.base)} note={m.partial ? "часть позиций без количества не учтена" : "при том же объёме закупок"} />
         </div>
+        <p className="text-xs" style={{ color: RC.ink2 }}><b style={{ color: RC.ink }}>Допущение:</b> потребность {year} = объём закупок из ГПЗ {baseYear} × прогнозные цены. Если в ГПЗ {year} изменится состав или объём закупок, сумму нужно пересчитать — проценты роста по категориям при этом остаются ориентиром.</p>
         <div className="grid gap-3 lg:grid-cols-2">
           <Box title="Сумма по категориям">
             <table className="w-full text-xs" style={NUM}>
@@ -431,7 +420,24 @@ function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year:
           </Box>
         </div>
       </>}
-      <div className="grid gap-3 lg:grid-cols-2">
+      {m.quarters.some(Boolean) && (
+        <Box title={`Потребность ${year} по кварталам (по графику ГПЗ ${baseYear})`}>
+          <div className="flex h-28 items-end gap-3">
+            {m.quarters.map((n, i) => (
+              <div key={i} className="flex flex-1 flex-col items-center gap-1 text-xs" style={NUM}>
+                <b>{m.quarterSums[i] ? fmtMoney(m.quarterSums[i]) : n}</b>
+                <div className="w-full rounded-t" style={{ height: `${((m.quarterSums.some(Boolean) ? m.quarterSums[i] / Math.max(...m.quarterSums) : n / qMax)) * 70}px`, background: RC.blue }} />
+                <span style={{ color: RC.muted }}>{i + 1} кв. · {n} {plural(n, "закупка", "закупки", "закупок")}</span>
+              </div>
+            ))}
+          </div>
+        </Box>
+      )}
+    </>
+  );
+  return (
+    <>
+      <div className="grid gap-3">
         <Box title={`Надёжность расчёта${m.byWeight ? " — доля суммы" : " — доля позиций"}`}>
           <div className="flex h-4 overflow-hidden rounded" style={{ background: RC.track }}>
             {m.trust.filter((t) => t.v > 0).map((t) => <div key={t.label} style={{ width: `${t.v}%`, background: t.c }} data-tip={`${t.label}: ${fmtNum(t.v)} %`} />)}
@@ -439,19 +445,6 @@ function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year:
           <ul className="mt-3 space-y-1 text-xs" style={{ color: RC.ink2 }}>
             {m.trust.map((t) => <li key={t.label} className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: t.c }} /><span className="flex-1">{t.label}</span><b style={{ ...NUM, color: RC.ink }}>{fmtNum(t.v)} %</b></li>)}
           </ul>
-        </Box>
-        <Box title={`Потребность ${year} по кварталам (по графику ГПЗ ${baseYear})`}>
-          {m.quarters.some(Boolean) ? (
-            <div className="flex h-28 items-end gap-3">
-              {m.quarters.map((n, i) => (
-                <div key={i} className="flex flex-1 flex-col items-center gap-1 text-xs" style={NUM}>
-                  <b>{m.quarterSums[i] ? fmtMoney(m.quarterSums[i]) : n}</b>
-                  <div className="w-full rounded-t" style={{ height: `${((m.quarterSums.some(Boolean) ? m.quarterSums[i] / Math.max(...m.quarterSums) : n / qMax)) * 70}px`, background: RC.blue }} />
-                  <span style={{ color: RC.muted }}>{i + 1} кв. · {n} {plural(n, "закупка", "закупки", "закупок")}</span>
-                </div>
-              ))}
-            </div>
-          ) : <p className="text-xs" style={{ color: RC.muted }}>Квартал закупки появится после повторной загрузки ГПЗ.</p>}
         </Box>
       </div>
       {m.nmc && (
@@ -463,12 +456,6 @@ function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year:
           </div>
           <p className="mt-2 text-xs" style={{ color: RC.ink2 }}>Цена договора — это цена после торгов. Если ставить НМЦ {year} от цены договора, в ней не будет запаса на торг; вариант «от НМЦ {baseYear}» сохраняет его. По {m.nmc.positions} {plural(m.nmc.positions, "позиции", "позициям", "позициям")}, где в отчётности есть НМЦ.</p>
         </Box>
-      )}
-      {notes.length > 0 && (
-        <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2 }}>
-          <p className="mb-1 font-semibold" style={{ color: RC.ink }}>Обратите внимание</p>
-          <ul className="list-disc space-y-0.5 pl-4">{notes.map((n) => <li key={n}>{n}</li>)}</ul>
-        </div>
       )}
     </>
   );
@@ -532,7 +519,8 @@ function ChangesSheet({ forecastId, prevVersionId, curVersionId, prevNumber }: {
 }
 
 /** Позиции, которые стоит проверить, и строки, не попавшие в расчёт — для сотрудников */
-function AttentionSheet({ view, excluded }: { view: ViewRow[]; excluded: ExcludedRow[] }) {
+function AttentionSheet({ view, excluded, year, baseYear }: { view: ViewRow[]; excluded: ExcludedRow[]; year: number; baseYear: number }) {
+  const notes = dataNotes(view, year, baseYear);
   const list = view.filter((v) => v.reasons.length || v.meta?.edited)
     .sort((a, b) => (sumBase(b.row) ?? b.row.forecastPrice) - (sumBase(a.row) ?? a.row.forecastPrice)).slice(0, 18);
   const groups = new Map<string, number>();
@@ -568,6 +556,12 @@ function AttentionSheet({ view, excluded }: { view: ViewRow[]; excluded: Exclude
           <p className="mt-2 text-[11px]" style={{ color: RC.muted }}>Список строк — на вкладке «Прогноз», ссылка «Посмотреть».</p>
         </Box>
       </div>
+      {notes.length > 0 && (
+        <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2 }}>
+          <p className="mb-1 font-semibold" style={{ color: RC.ink }}>Особенности договоров</p>
+          <ul className="list-disc space-y-0.5 pl-4">{notes.map((n) => <li key={n}>{n}</li>)}</ul>
+        </div>
+      )}
     </>
   );
 }
@@ -579,79 +573,59 @@ const REASON_SHORT: Record<ReasonCode, string> = {
   lot: "цена за весь лот", okpd_short: "ОКПД2 неполный",
 };
 
-/** Цены за единицу по предметам и регионам — главное для заказчика: сколько закладывать на свой договор */
-function PriceSheets({ view, audience, year, baseYear, reference, q }: { view: ViewRow[]; audience: "staff" | "customer"; year: number; baseYear: number; reference: Reference; q: string }) {
-  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const list = view.filter((v) => !words.length || words.every((w) => `${v.search} ${v.row.regionName ?? ""}`.toLowerCase().includes(w)))
-    .sort((a, b) => a.row.subject.localeCompare(b.row.subject, "ru") || (a.row.regionName ?? "").localeCompare(b.row.regionName ?? "", "ru"));
-  const next = reference.indices.find((i) => i.kind === "cpi" && i.year === year + 1 && isActiveIndex(i));
-  const vat = (r: ForecastRow) => r.vatRate ?? 0.22;
-  const chunks: ViewRow[][] = [];
-  for (let i = 0; i < list.length; i += PRICE_ROWS) chunks.push(list.slice(i, i + PRICE_ROWS));
-  if (!chunks.length) chunks.push([]);
+
+const chunk = <T,>(xs: T[], n: number): T[][] => { const out: T[][] = []; for (let i = 0; i < xs.length; i += n) out.push(xs.slice(i, i + n)); return out; };
+/** Множитель к сумме: +6,3 % → «1,063» */
+const fmtMult = (pct: number) => (1 + pct / 100).toLocaleString("ru-RU", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+/** Надёжность по числу договоров: меньше 5 — мало данных */
+function reliability(contracts: number) {
+  return contracts >= 10 ? { text: "надёжно", c: RC.teal } : contracts >= 5 ? { text: "средне", c: RC.ink2 } : { text: "мало данных", c: RC.warn };
+}
+
+/** Рост по группам для заказчика: полоса с линией инфляции, множитель к сумме и надёжность */
+function RateTable({ groups, year, baseYear, cpi, examples }: {
+  groups: { key: string; label: string; total: number; rows: ForecastRow[] }[]; year: number; baseYear: number; cpi: number | null; examples?: boolean;
+}) {
+  const max = Math.max(cpi ?? 0, ...groups.map((g) => g.total), 1);
+  const min = Math.min(0, ...groups.map((g) => g.total));
+  const X = (v: number) => ((v - min) / (max - min || 1)) * 100;
   const th = "py-1.5 pr-3 text-left text-[10.5px] font-medium uppercase tracking-wide";
-  const td = "border-t py-1.5 pr-3 align-top";
+  const td = "border-t py-2 pr-3 align-middle";
   return (
-    <>
-      {chunks.map((rows, ci) => (
-        <Sheet key={ci}>
-          <div>
-            <h2 className="text-xl font-semibold">Цены по предметам закупки{chunks.length > 1 ? ` · ${ci + 1} из ${chunks.length}` : ""}</h2>
-            <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Цена за единицу: по договорам {baseYear} года и прогноз на {year} год — без НДС и с НДС.</p>
-          </div>
-          {ci === 0 && (
-            <div className="rounded-lg px-4 py-3 text-xs leading-relaxed" style={{ background: RC.bg, color: RC.ink2 }}>
-              <p className="font-semibold" style={{ color: RC.ink }}>Как пользоваться</p>
-              <ol className="mt-1 list-decimal space-y-0.5 pl-4">
-                <li>Найдите свой предмет закупки и регион.</li>
-                <li>«Прогноз {year}» — ориентир цены за единицу. Умножьте на количество — получите сумму для планирования. Для бюджета берите цену с НДС.</li>
-                <li>Отметка <b style={{ color: RC.warn }}>мало данных</b> — цена посчитана по 1–2 договорам и может быть случайной: сверьте её с коммерческими предложениями.</li>
-                <li>«Разброс» — самая низкая и самая высокая цена договоров {baseYear}: показывает, насколько цены различались между поставщиками.</li>
-                <li>Договор на несколько лет: на каждый следующий год добавьте рост цен{next ? ` — прогноз инфляции на ${year + 1} год ${fmtPct((next.value - 1) * 100)}` : " по прогнозу инфляции Минэкономразвития"}.</li>
-              </ol>
-            </div>
-          )}
-          <table className="w-full text-xs" style={NUM}>
-            <thead style={{ color: RC.muted }}><tr>
-              <th className={th}>Предмет закупки</th><th className={th}>Регион</th><th className={th}>Ед.</th>
-              <th className={`${th} text-right`}>Цена {baseYear}</th><th className={`${th} text-right`}>Прогноз {year} без НДС</th><th className={`${th} text-right`}>Прогноз {year} с НДС</th>
-              <th className={`${th} text-right`}>Рост</th><th className={`${th} text-right`}>Разброс {baseYear}</th>
-              {audience === "staff" && <th className={`${th} text-right`}>НМЦ {year} от НМЦ {baseYear}</th>}
-            </tr></thead>
-            <tbody>{rows.map((v) => {
-              const r = v.row;
-              const few = r.contracts < 3;
-              const lo = r.prices.length ? Math.min(...r.prices) : null, hi = r.prices.length ? Math.max(...r.prices) : null;
-              return (
-                <tr key={v.id}>
-                  <td className={td} style={{ borderColor: RC.line }}><span className="font-medium" style={{ color: RC.ink }}>{r.subject}</span>
-                    {r.gpzNames?.[0] && <span className="block text-[10.5px]" style={{ color: RC.muted }}>{r.gpzNames[0]}</span>}</td>
-                  <td className={td} style={{ borderColor: RC.line }}>{r.regionName ? shortRegion(r.regionName) : "—"}</td>
-                  <td className={td} style={{ borderColor: RC.line }}>{r.unitLabel}</td>
-                  <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{rubShort(contractPrice(r))}</td>
-                  <td className={`${td} whitespace-nowrap text-right font-semibold`} style={{ borderColor: RC.line, color: RC.ink }}>{rubShort(r.forecastPrice)}</td>
-                  <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{rubShort(r.forecastPrice * (1 + vat(r)))}<span className="block text-[10px]" style={{ color: RC.muted }}>НДС {Math.round(vat(r) * 100)} %</span></td>
-                  <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{fmtPct(v.growth)}</td>
-                  <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>
-                    {lo != null && hi != null && hi > lo ? `${rubShort(lo)} – ${rubShort(hi)}` : "—"}
-                    <span className="block text-[10px]" style={{ color: few ? RC.warn : RC.muted }}>{r.contracts} {plural(r.contracts, "договор", "договора", "договоров")}{few ? " · мало данных" : ""}</span>
-                  </td>
-                  {audience === "staff" && <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{r.nmcMedian ? rubShort(r.nmcMedian * (r.forecastPrice / contractPrice(r))) : "—"}</td>}
-                </tr>
-              );
-            })}
-            {!rows.length && <tr><td colSpan={9} className="py-6 text-center" style={{ color: RC.muted }}>Ничего не найдено</td></tr>}</tbody>
-          </table>
-        </Sheet>
-      ))}
-    </>
+    <table className="w-full text-xs" style={NUM}>
+      <thead style={{ color: RC.muted }}><tr>
+        <th className={th}>{examples ? "Направление" : "Категория"}</th><th className={`${th} w-[34%]`}>Рост цен {year} к {baseYear}</th>
+        <th className={`${th} text-right`}>Множитель к сумме</th><th className={`${th} text-right`}>Надёжность</th>
+      </tr></thead>
+      <tbody>{groups.map((g) => {
+        const contracts = g.rows.reduce((s, r) => s + r.contracts, 0);
+        const rel = reliability(contracts);
+        const ex = [...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 2);
+        return (
+          <tr key={g.key}>
+            <td className={td} style={{ borderColor: RC.line }}><span className="font-medium" style={{ color: RC.ink }}>{g.label || "Без категории"}</span>
+              {examples && ex.length > 0 && <span className="block text-[10.5px]" style={{ color: RC.muted }}>например: {ex.join("; ")}</span>}</td>
+            <td className={td} style={{ borderColor: RC.line }}>
+              <div className="flex items-center gap-2">
+                <div className="relative h-2.5 flex-1 rounded-sm" style={{ background: RC.track }}>
+                  <div className="absolute inset-y-0 rounded-sm" style={{ left: `${X(Math.min(0, g.total))}%`, width: `${Math.abs(X(g.total) - X(0))}%`, background: g.total < 0 ? RC.sky : RC.blue }} />
+                  {cpi != null && <div className="absolute -inset-y-1 border-l-2 border-dashed" style={{ left: `${X(cpi)}%`, borderColor: RC.navy }} title={`инфляция ${fmtNum(cpi)} %`} />}
+                </div>
+                <b className="w-14 text-right" style={{ color: RC.ink }}>{fmtPct(g.total)}</b>
+              </div>
+            </td>
+            <td className={`${td} whitespace-nowrap text-right font-semibold`} style={{ borderColor: RC.line, color: RC.ink }}>× {fmtMult(g.total)}</td>
+            <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}><span style={{ color: rel.c }}>{rel.text}</span>
+              <span className="block text-[10px]" style={{ color: RC.muted }}>{contracts} {plural(contracts, "договор", "договора", "договоров")}</span></td>
+          </tr>
+        );
+      })}</tbody>
+      {cpi != null && <caption className="caption-bottom pt-2 text-left text-[10.5px]" style={{ color: RC.muted }}>Пунктир — общая инфляция {fmtNum(cpi)} %: правее неё направление дорожает быстрее инфляции. «Мало данных» — меньше 5 договоров, сверьте с коммерческими предложениями.</caption>}
+    </table>
   );
 }
 
-/** Подсказка «Как читать» для заказчика */
-function HowTo({ children }: { children: ReactNode }) {
-  return <p className="rounded-lg px-3 py-2 text-xs leading-relaxed" style={{ background: RC.bg, color: RC.ink2 }}><b style={{ color: RC.ink }}>Как читать. </b>{children}</p>;
-}
 
 /** Исходные данные расчёта — для сотрудников: какие индексы и с какими значениями применены, качество данных */
 function InputsSheet({ view, reference, year, baseYear }: { view: ViewRow[]; reference: Reference; year: number; baseYear: number }) {
@@ -764,20 +738,7 @@ function Kpi({ label, value, note }: { label: string; value: ReactNode; note: st
   );
 }
 
-const Dot = ({ c }: { c: string }) => <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: c }} />;
-const Flag = () => <span className="whitespace-nowrap rounded px-1 py-px text-[9.5px] font-semibold" style={{ color: RC.blue, background: "#E8EEFC" }}>= инфл.</span>;
 
-function Legend({ year, baseYear, cpi, extra }: { year: number; baseYear: number; cpi: number | null; extra?: ReactNode }) {
-  const sq = (c: string) => <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: c }} />;
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]" style={{ color: RC.ink2 }}>
-      <span className="inline-flex items-center gap-1.5">{sq(RC.sky)}рост цен в {baseYear}</span>
-      <span className="inline-flex items-center gap-1.5">{sq(RC.blue)}рост в {year}</span>
-      {cpi != null && <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 border-l-2 border-dashed" style={{ borderColor: RC.navy }} />инфляция {fmtNum(cpi)}&nbsp;%</span>}
-      {extra}
-    </div>
-  );
-}
 
 /** Водопад: цена договоров → рост внутри базового года → рост отрасли → прогноз. Ось обрезана снизу — показан разрыв */
 function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: number; intra: number; industry: number }; year: number; baseYear: number; lastMonth: number | null }) {
@@ -791,7 +752,7 @@ function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: numbe
     { from: 100, to: 100 + split.intra, color: RC.sky, label: fmtPct(split.intra), tip: `Пересчёт цены договора до последнего месяца с данными Росстата: ${fmtPct(split.intra)}` },
     // Рост отрасли начисляется на уже выросшую цену: подпись — сам рост отрасли, высота столбика — его вклад в п.п. от цены договора
     { from: 100 + split.intra, to: 100 + split.total, color: RC.blue, label: fmtPct(rate), tip: `Рост цен в ${year} (отраслевые индексы, зарплаты, курс, Минстрой): ${fmtPct(rate)} к уже выросшей цене (${fmtNum(split.industry)} п.п. от цены договора). Итого: (1 ${split.intra < 0 ? "−" : "+"} ${fmtNum(Math.abs(split.intra), 2)} %) × (1 ${rate < 0 ? "−" : "+"} ${fmtNum(Math.abs(rate), 2)} %) − 1 = ${fmtPct(split.total)}` },
-    { from: floor, to: 100 + split.total, color: RC.violet, label: `${fmtNum(100 + split.total)} %`, inside: true, brk: true, tip: `Прогноз цены ${year} к цене договоров ${baseYear}` },
+    { from: floor, to: 100 + split.total, color: RC.violet, label: `${fmtNum(100 + split.total)} %`, brk: true, tip: `Прогноз цены ${year} к цене договоров ${baseYear}` },
   ];
   const caps: [string, string][] = [
     [`Цена договоров ${baseYear}`, "медиана, без НДС"],
@@ -801,14 +762,14 @@ function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: numbe
   ];
   return (
     <div>
-      <div className="mt-6 grid h-56 grid-cols-4 gap-2.5 border-b sm:h-[250px]" style={{ borderColor: RC.line }}>
+      <div className="mt-8 grid h-56 grid-cols-4 gap-2.5 border-b sm:h-[250px]" style={{ borderColor: RC.line }}>
         {bars.map((b, i) => {
           const bottom = h(Math.min(b.from, b.to)), height = Math.max(0.8, Math.abs(h(b.to) - h(b.from)));
           return (
             <div key={i} className="relative h-full" data-tip={b.tip}>
               <div className="absolute inset-x-0 rounded" style={{ bottom: `${bottom}%`, height: `${height}%`, background: b.color }} />
               {b.brk && <div className="absolute -inset-x-0.5 bottom-[18px] h-[7px]" style={{ background: "repeating-linear-gradient(135deg,transparent 0 4px,#fff 4px 6px)" }} />}
-              <div className="absolute inset-x-0 text-center text-sm font-semibold sm:text-[15px]" style={{ ...NUM, color: b.inside ? "#fff" : RC.ink, bottom: b.inside ? `calc(${bottom + height}% - 26px)` : `calc(${bottom + height}% + 4px)` }}>{b.label}</div>
+              <div className="absolute inset-x-0 text-center text-sm font-semibold sm:text-[15px]" style={{ ...NUM, color: RC.ink, bottom: `calc(${bottom + height}% + 4px)` }}>{b.label}</div>
             </div>
           );
         })}
@@ -823,117 +784,16 @@ function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: numbe
   );
 }
 
-/** Ось баров: от нуля (или минимума ниже нуля) до чётного целого над максимумом и инфляцией */
-function barDomain(groups: Group[], cpi: number | null) {
-  const max = evenCeil(Math.max(...groups.map((g) => g.total), cpi ?? 0));
-  const minT = Math.min(...groups.map((g) => g.total), 0);
-  const min = minT < 0 ? -evenCeil(-minT) : 0;
-  const step = max - min <= 12 ? 2 : 5;
-  return { min, max, ticks: ticks(min, max, step) };
-}
 
-/** Горизонтальный бар из двух частей: голубая — рост в базовом году, синяя — рост отрасли; отрицательный итог — влево от нуля */
-function Bar({ g, min, max, cpi, tip, tall }: { g: Group; min: number; max: number; cpi: number | null; tip: string; tall?: boolean }) {
-  const x = (v: number) => ((v - min) / (max - min)) * 100;
-  const z = x(0);
-  const a = Math.max(0, Math.min(g.intra, g.total));
-  return (
-    <div className={`relative ${tall ? "h-4" : "h-3"} rounded-[3px]`} style={{ background: RC.track }} data-tip={tip}>
-      {g.total < 0 ? (
-        <div className="absolute inset-y-0 rounded-l-[3px]" style={{ left: `${x(g.total)}%`, width: `${z - x(g.total)}%`, background: RC.blue }} />
-      ) : <>
-        {a > 0 && <div className="absolute inset-y-0 rounded-l-[3px]" style={{ left: `${z}%`, width: `calc(${x(a) - z}% - 1px)`, background: RC.sky }} />}
-        {g.total - a > 0 && <div className={`absolute inset-y-0 ${a > 0 ? "rounded-r-[3px]" : "rounded-[3px]"}`}
-          style={{ left: `calc(${x(a)}% + ${a > 0 ? 1 : 0}px)`, width: `calc(${x(g.total) - x(a)}% - ${a > 0 ? 1 : 0}px)`, background: RC.blue }} />}
-      </>}
-      {min < 0 && <div className="absolute -inset-y-[3px] border-l" style={{ left: `${z}%`, borderColor: RC.muted }} />}
-      {cpi != null && <div className="absolute -inset-y-1 border-l-2 border-dashed" style={{ left: `${x(cpi)}%`, borderColor: RC.navy }} />}
-    </div>
-  );
-}
 
-function Axis({ min, max, values }: { min: number; max: number; values: number[] }) {
-  return (
-    <div className="relative h-3.5 text-[10px]" style={{ color: RC.muted }}>
-      {values.map((t, i) => (
-        <span key={t} className={`absolute -translate-x-1/2 whitespace-nowrap ${i === 0 || i === values.length - 1 || t === 0 ? "" : "hidden sm:inline"}`}
-          style={{ ...NUM, left: `${((t - min) / (max - min)) * 100}%` }}>{fmtNum(t, 0)}&nbsp;%</span>
-      ))}
-    </div>
-  );
-}
 
 const tipOf = (name: string, g: Group, year: number, baseYear: number) =>
   `${name}: рост цен в ${baseYear} ${fmtPct(g.intra)} + рост в ${year} ${fmtPct(g.industry)} = ${fmtPct(g.total)}`;
 
-/** Бары по категориям: название, бар, итог и разложение */
-function StackedBars({ groups, cpi, year, baseYear, parts, labelWidth }: {
-  groups: (Group & { full?: string })[]; cpi: number | null; year: number; baseYear: number; parts?: boolean; labelWidth: string;
-}) {
-  const d = barDomain(groups, cpi);
-  return (
-    <div className="mt-4 grid items-center gap-x-2.5 gap-y-3.5" style={{ gridTemplateColumns: `minmax(0,${labelWidth}) minmax(0,1fr) 72px` }}>
-      {groups.map((g) => (
-        <Row key={g.key}>
-          <span className="text-xs leading-tight" data-tip={g.full ?? g.key}>{g.label ?? g.key}</span>
-          <Bar g={g} min={d.min} max={d.max} cpi={cpi} tall tip={tipOf(g.full ?? g.key, g, year, baseYear)} />
-          <span className="text-right text-[12.5px] font-semibold" style={NUM}>
-            {fmtPct(g.total)}
-            {parts && <span className="block whitespace-nowrap text-[10.5px] font-normal" style={{ color: RC.muted }}>{fmtNum(g.intra)} + {fmtNum(g.industry)}</span>}
-          </span>
-        </Row>
-      ))}
-      <span /><Axis min={d.min} max={d.max} values={d.ticks} /><span />
-    </div>
-  );
-}
 
-const Row = ({ children }: { children: ReactNode }) => <>{children}</>;
 
-/** Бары по предметам: две колонки с общей осью, по убыванию роста */
-function ItemColumns({ groups, cpi, year, baseYear }: { groups: Group[]; cpi: number | null; year: number; baseYear: number }) {
-  const d = barDomain(groups, cpi);
-  const half = Math.ceil(groups.length / 2);
-  const col = (list: Group[]) => (
-    <div className="grid grid-cols-[minmax(0,8.5rem)_minmax(0,1fr)_52px] items-center gap-x-2.5 gap-y-2.5 sm:grid-cols-[minmax(0,13rem)_minmax(0,1fr)_52px]">
-      {list.map((g) => (
-        <Row key={g.key}>
-          <span className="line-clamp-2 text-xs leading-tight" data-tip={g.key}>
-            {g.key}{cpi != null && r1(g.total) === r1(cpi) && <span className="ml-1"><Flag /></span>}
-          </span>
-          <Bar g={g} min={d.min} max={d.max} cpi={cpi} tip={tipOf(g.key, g, year, baseYear)} />
-          <span className="text-right text-[12.5px] font-semibold" style={NUM}>{fmtPct(g.total)}</span>
-        </Row>
-      ))}
-      <span /><Axis min={d.min} max={d.max} values={d.ticks} /><span />
-    </div>
-  );
-  return (
-    <div className="grid gap-x-9 gap-y-2.5 lg:grid-cols-2">
-      {col(groups.slice(0, half))}
-      {groups.length > half && col(groups.slice(half))}
-    </div>
-  );
-}
 const r1 = (v: number) => Math.round(v * 10) / 10;
 
-/** Полоса «дороже / на уровне / ниже инфляции», ширина по количеству */
-function Strip({ above, equal, below, cpi }: { above: number; equal: number; below: number; cpi: number }) {
-  const parts = [
-    { n: above, label: "дороже инфляции", bg: RC.blue, tip: `Прогноз роста выше ${fmtNum(cpi)} %` },
-    { n: equal, label: "на уровне инфляции", bg: RC.sky, tip: `Прогноз роста ровно ${fmtNum(cpi)} %` },
-    { n: below, label: "ниже", bg: RC.navy, tip: `Прогноз роста ниже ${fmtNum(cpi)} %` },
-  ].filter((p) => p.n > 0);
-  return (
-    <div className="flex h-[26px] gap-0.5 overflow-hidden rounded-md text-[11.5px] font-semibold text-white" style={NUM}>
-      {parts.map((p) => (
-        <div key={p.label} className="flex min-w-0 items-center overflow-hidden whitespace-nowrap pl-2.5" style={{ flex: Math.max(p.n, 1.6), background: p.bg }} data-tip={p.tip}>
-          {p.n} {p.label}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 /** Все предметы среза с регионами: регионы по возрастанию прогноза */
 function regionTable(rows: ForecastRow[]) {
@@ -953,68 +813,3 @@ function regionTable(rows: ForecastRow[]) {
 
 const rubShort = (v: number) => (v >= 1e6 ? `${fmtNum(v / 1e6)} млн ₽` : `${Math.round(v).toLocaleString("ru-RU").replace(/\s/g, " ")} ₽`);
 
-/** Точечный график: насколько прогноз в регионе выше минимального по предмету */
-function DotPlot({ items, year, baseYear, mine }: { items: ReturnType<typeof regionTable>; year: number; baseYear: number; mine: Set<string> }) {
-  const rows = items.map((it) => ({ ...it, regs: it.regs.map((r) => ({ ...r, d: it.regs[0].fc > 0 ? (r.fc / it.regs[0].fc - 1) * 100 : 0 })) }))
-    .sort((a, b) => b.regs[b.regs.length - 1].d - a.regs[a.regs.length - 1].d);
-  const maxD = Math.max(...rows.map((r) => r.regs[r.regs.length - 1].d), 1);
-  const step = maxD > 60 ? 25 : maxD > 25 ? 10 : 5;
-  const MAX = Math.ceil(maxD / step) * step;
-  const X = (p: number) => (p / MAX) * 100;
-  const grid = ticks(0, MAX, step);
-  return (
-    <div className="grid items-center gap-x-4 sm:grid-cols-[minmax(0,15rem)_minmax(0,1fr)_9.5rem]">
-      <span className="hidden pb-1.5 text-[10.5px] uppercase tracking-wide sm:block" style={{ color: RC.muted }}>Предмет закупки</span>
-      <div className="relative hidden h-4 text-[10px] sm:block" style={{ color: RC.muted }}>
-        {grid.map((t) => <span key={t} className="absolute -translate-x-1/2 whitespace-nowrap" style={{ ...NUM, left: `${X(t)}%` }}>{t ? `на ${t}\u00a0%` : "дешевле всего"}</span>)}
-      </div>
-      <span className="hidden pb-1.5 text-right text-[10.5px] uppercase tracking-wide sm:block" style={{ color: RC.muted }}>Прогноз {year}</span>
-      {rows.map((r) => {
-        const last = r.regs.length - 1;
-        // Подпись ставим в ту строку (над или под линией), где она дальше от предыдущей подписи
-        const lastIn = { up: -99, dn: -99 };
-        return (
-          <Row key={`${r.okpd2}|${r.unit}`}>
-            <div className="flex min-h-[46px] flex-wrap content-center gap-x-1 border-t pt-2 text-xs leading-tight sm:pt-0" style={{ borderColor: RC.line }}>
-              <span className="line-clamp-2" data-tip={`${r.subject} · ОКПД2 ${r.okpd2}`}>{r.subject}</span> <small style={{ color: RC.muted }}>₽/{r.unit}</small>
-            </div>
-            <div className="relative h-[30px] sm:h-[46px] sm:border-t" style={{ borderColor: RC.line }}>
-              {grid.slice(1).map((t) => <div key={t} className="absolute inset-y-0 border-l border-dotted" style={{ left: `${X(t)}%`, borderColor: "#D5D9E6" }} />)}
-              <div className="absolute inset-x-0 top-[22px] h-0.5" style={{ background: RC.track }} />
-              <div className="absolute top-[21px] h-1 rounded-sm" style={{ left: 0, width: `${X(r.regs[last].d)}%`, background: RC.span }} />
-              {r.regs.map((g, k) => {
-                const x = X(g.d);
-                // Подписи «Регион на N % дороже» длинные — соседние разводим над и под линией с запасом
-                const GAP = 26;
-                const pos: "up" | "dn" = x - lastIn.up >= GAP ? "up" : x - lastIn.dn >= GAP ? "dn" : lastIn.up <= lastIn.dn ? "up" : "dn";
-                // Обе строки заняты рядом — подпись сдвигается вправо, точка остаётся на месте
-                const lx = Math.min(Math.max(x, lastIn[pos] + GAP), 100);
-                lastIn[pos] = lx;
-                const c = k === 0 ? RC.navy : k === last ? RC.violet : RC.blue;
-                const align = lx < 8 ? "translate-x-0" : lx > 88 ? "-translate-x-full" : "-translate-x-1/2";
-                return (
-                  <span key={g.name}>
-                    <span className={`absolute top-[23px] -ml-[5.5px] -mt-[5.5px] h-[11px] w-[11px] rounded-full border-2 border-white ${mine.has(g.name) ? "ring-2 ring-amber-400" : ""}`} style={{ left: `${x}%`, background: c }}
-                      data-tip={`${g.name}: ${rubShort(g.base)} → ${rubShort(g.fc)} за ${r.unit}${k ? `, на ${fmtNum(g.d, 0)} % выше минимума` : ", самая низкая цена"}`} />
-                    <span className={`absolute hidden whitespace-nowrap text-[10px] sm:inline ${align} ${pos === "up" ? "top-[3px]" : "top-[30px]"}`} style={{ left: `${lx}%`, color: RC.ink2 }}>
-                      <span style={mine.has(g.name) ? { color: RC.ink, fontWeight: 700, background: "#FEF3C7", padding: "0 3px", borderRadius: 3 } : undefined}>{shortRegion(g.name)}{mine.has(g.name) ? " (ваш)" : ""}</span>{k > 0 && <b style={{ color: RC.ink }}> на {fmtNum(g.d, 0)}% дороже</b>}
-                    </span>
-                  </span>
-                );
-              })}
-            </div>
-            <div className="flex flex-col justify-center pb-2 text-[11.5px] sm:h-[46px] sm:border-t sm:pb-0 sm:text-right" style={{ ...NUM, borderColor: RC.line }}>
-              <span className="whitespace-nowrap">{rubShort(r.regs[0].fc)} – {rubShort(r.regs[last].fc)}</span>
-              <small className="text-[10px]" style={{ color: RC.muted }}>{r.regs.length} {plural(r.regs.length, "регион", "региона", "регионов")}</small>
-              <span className="mt-0.5 text-[11px] sm:hidden" style={{ color: RC.ink2 }}>
-                {r.regs.map((g, k) => <span key={g.name}>{k > 0 && " · "}{shortRegion(g.name)}{k > 0 ? <b style={{ color: RC.ink }}> на {fmtNum(g.d, 0)}% дороже</b> : " — дешевле всего"}</span>)}
-              </span>
-            </div>
-          </Row>
-        );
-      })}
-      <span className="hidden sm:block" />
-      <p className="mt-1 text-[10px] sm:col-span-2" style={{ color: RC.muted }}>Шкала — насколько цена в регионе выше, чем в самом дешёвом регионе; цены {baseYear} → {year} — при наведении на точку.</p>
-    </div>
-  );
-}
