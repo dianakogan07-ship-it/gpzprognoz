@@ -16,20 +16,20 @@ import { MinstroyHowTo, MinstroyImportButton } from "@/components/MinstroyImport
 import { DATA_LINKS, DATA_LINKS_HINT } from "@/lib/sources";
 import { lastDataMonth } from "@/lib/logic";
 
-type Tab = { kind: IndexKind; title: string; hint: string; empty: string; extra?: boolean };
+type Tab = { kind: IndexKind; short: string; title: string; hint: string; empty: string; extra?: boolean };
 
 const tabsFor = (target: number): Tab[] => [
-  { kind: "forecast", title: `Рост цен по отраслям ${target}`, hint: "Ожидаемый рост цен в отрасли на следующий год. Подбирается по коду ОКПД2, а если его нет — по разделу ОКВЭД2.",
+  { kind: "forecast", short: "Отрасли", title: `Рост цен по отраслям ${target}`, hint: "Ожидаемый рост цен в отрасли на следующий год. Подбирается по коду ОКПД2, а если его нет — по разделу ОКВЭД2.",
     empty: "Отраслевые индексы делают прогноз точнее: цены на стройматериалы, ИТ-услуги или топливо растут по-разному. Без них все позиции считаются по общей инфляции и требуют согласования." },
-  { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
+  { kind: "cpi", short: "Инфляция", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
     empty: "Общая инфляция — запасной вариант: она применяется, когда для отрасли нет своего индекса. Без неё такие позиции останутся без пересчёта на следующий год." },
-  { kind: "wage", title: `Рост зарплат ${target}`, hint: "Для трудоёмких услуг — охрана (80), уборка (81.2), питание (56), обучение (85): основная часть их цены — зарплата персонала, а она растёт не так, как потребительские цены.",
+  { kind: "wage", short: "Зарплаты", title: `Рост зарплат ${target}`, hint: "Для трудоёмких услуг — охрана (80), уборка (81.2), питание (56), обучение (85): основная часть их цены — зарплата персонала, а она растёт не так, как потребительские цены.",
     empty: "Без прогноза зарплат трудоёмкие услуги считаются по отраслевому индексу или общей инфляции — рост может быть занижен." },
-  { kind: "fx", title: `Курс валют ${target}`, hint: "Для договоров в валюте (колонка «Наименование валюты» в отчётности): цена в рублях следует за курсом. Код — USD, EUR или CNY; если нужной валюты нет, берётся доллар.",
+  { kind: "fx", short: "Курс валют", title: `Курс валют ${target}`, hint: "Для договоров в валюте (колонка «Наименование валюты» в отчётности): цена в рублях следует за курсом. Код — USD, EUR или CNY; если нужной валюты нет, берётся доллар.",
     empty: "Без прогноза курса валютные договоры считаются как рублёвые." },
-  { kind: "minstroy", title: "Стройка по регионам", hint: "Индексы изменения сметной стоимости Минстроя по субъектам РФ. Применяются к строительству и проектированию (ОКПД2 41, 42, 43, 71.1) в своём регионе вместо общего индекса «Строительство».",
+  { kind: "minstroy", short: "Стройка по регионам", title: "Стройка по регионам", hint: "Индексы изменения сметной стоимости Минстроя по субъектам РФ. Применяются к строительству и проектированию (ОКПД2 41, 42, 43, 71.1) в своём регионе вместо общего индекса «Строительство».",
     empty: "Строительство — самая крупная часть ГПЗ. Без региональных индексов Минстроя оно считается по общему индексу для всей страны." },
-  { kind: "to_december", title: "Перерасчёт цен по месяцам", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
+  { kind: "to_december", short: "Пересчёт по месяцам", title: "Перерасчёт цен по месяцам", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
     empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня последнего месяца с данными Росстата, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
 ];
 
@@ -371,6 +371,8 @@ export default function IndicesPage() {
   };
 
   useEffect(() => setSelected(new Set()), [kind, onlyPending, year]);
+  // На узком экране выбранная вкладка может оказаться за краем — прокручиваем её в видимую часть
+  useEffect(() => { document.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" }); }, [tabKind]);
 
   async function approve(ids: number[]) {
     setBusy(true);
@@ -529,21 +531,25 @@ export default function IndicesPage() {
           </button>
         )}
 
-        <div className="flex flex-wrap gap-1 border-b border-slate-200">
-          {tabs.map((t) => {
-            const list = indices.filter((i) => (i.kind === t.kind || i.kind === `${t.kind}_cons`) && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved));
-            // По месяцам считаем отрасли, а не строки
-            const n = t.kind === "to_december" ? new Set(list.map((i) => i.key)).size : list.length;
-            return (
-              <button key={t.kind} onClick={() => { setTabKind(t.kind); }}
-                className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${t.kind === tabKind ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
-                {t.title}
-                {t.extra && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">доп. настройка</span>}
-                <span className="ml-2 text-xs text-slate-400">{n}</span>
-              </button>
-            );
-          })}
+        {/* Виды индексов — одной строкой; на узком экране листаются вбок */}
+        <div className="-mx-1 overflow-x-auto px-1 pb-1">
+          <div role="tablist" className="inline-flex min-w-max gap-1 rounded-xl bg-slate-100 p-1">
+            {tabs.map((t) => {
+              const list = indices.filter((i) => (i.kind === t.kind || i.kind === `${t.kind}_cons`) && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved));
+              // По месяцам считаем отрасли, а не строки
+              const n = t.kind === "to_december" ? new Set(list.map((i) => i.key)).size : list.length;
+              const on = t.kind === tabKind;
+              return (
+                <button key={t.kind} role="tab" aria-selected={on} onClick={() => setTabKind(t.kind)} title={t.title}
+                  className={`inline-flex items-center gap-2 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-semibold transition ${on ? "bg-white text-brand shadow-sm ring-1 ring-slate-200" : "text-slate-600 hover:bg-white/60 hover:text-slate-900"}`}>
+                  {t.short}
+                  <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${on ? "bg-brand text-white" : n ? "bg-slate-200 text-slate-600" : "bg-slate-200/60 text-slate-400"}`}>{n}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
+        <h2 className="text-lg font-semibold text-slate-900">{tab.title}</h2>
 
         {hasScenario && (
           <div className="flex flex-wrap items-center gap-2 text-sm">
