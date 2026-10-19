@@ -5,6 +5,7 @@ import { api, useReference } from "@/components/useReference";
 import { COVERAGE_KEY, MONTHS, industryName } from "@/lib/indexFormat";
 import { DEFAULT_VAT, explainExample, lastDataMonth, type IndexRef } from "@/lib/logic";
 import type { ForecastRow } from "@/lib/forecast";
+import { RC } from "@/lib/report";
 import type { Reference } from "@/lib/types";
 
 
@@ -188,7 +189,7 @@ export default function LogicPage() {
   );
 }
 
-const STEP_COLORS = ["#c8433a", "#e57a2c", "#d9a400", "#4a7fa0"];
+const STEP_COLORS = [RC.navy, RC.sky, RC.blue, RC.violet];
 const STEP_TITLES = ["Цена договора", "Рост внутри года", "Рост в прогнозном году", "Прогноз"];
 
 const MONTHS_GEN_FROM = (m: number | null) => (m ? ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1] : "начала года");
