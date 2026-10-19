@@ -436,14 +436,33 @@ export default function IndicesPage() {
           <h1 className="text-xl font-semibold text-slate-900">Индексы роста цен</h1>
           <button className="text-sm font-medium text-brand hover:underline" onClick={() => setShowSources(true)}>Где взять данные</button>
         </div>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <p className="hint">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
+        <p className="hint">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
+        {canEdit && reference && (
+          <div className="space-y-2">
+            <p className="field-label">Загрузить из официальных источников</p>
+            <div className="grid gap-3 md:grid-cols-3">
+              {([
+                ["Минэкономразвития", "Рост по отраслям, общая инфляция, зарплаты и курс доллара — базовый и консервативный сценарии",
+                  <MerImportButton key="m" reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />],
+                ["Росстат", "Перерасчёт цен договоров по месяцам",
+                  <RosstatImportButton key="r" reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />],
+                ["ФГИС ЦС Минстроя", "Стройка по регионам",
+                  <MinstroyImportButton key="f" reference={reference} targetYear={target} disabled={busy} onDone={afterMinstroy} />],
+              ] as const).map(([t, d, btn]) => (
+                <div key={t} className="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 p-3">
+                  <div><p className="font-medium text-slate-900">{t}</p><p className="hint">{d}</p></div>
+                  <div>{btn}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        <div className="space-y-2 border-t border-slate-200 pt-3">
+          <p className="field-label">Свой файл и выгрузка — все виды индексов в одной таблице Excel</p>
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit && reference && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
-            {canEdit && reference && <RosstatImportButton reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />}
-            {canEdit && reference && <MinstroyImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMinstroy} />}
             {canEdit && <UploadButton busy={busy} onFile={upload} />}
-            <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
+            <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать все индексы</button>
+            <button className="text-sm text-brand underline-offset-2 hover:underline" onClick={() => downloadWorkbook(indexTemplate([], reference?.sources), "Шаблон индексов.xlsx")}>Пустой шаблон для своего файла</button>
           </div>
         </div>
         {notice && (
@@ -453,7 +472,6 @@ export default function IndicesPage() {
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-          <button className="text-brand underline-offset-2 hover:underline" onClick={() => downloadWorkbook(indexTemplate([], reference?.sources), "Шаблон индексов.xlsx")}>Скачать шаблон</button>
           {db === false && <span className="text-amber-700">База данных не подключена — индексы доступны только для просмотра.</span>}
           {error && <span className="text-red-600">{error}</span>}
         </div>
