@@ -27,7 +27,7 @@ describe("логика расчётов", () => {
     expect(e.needsApproval).toBe(false);
     const svc = buildForecast(
       [{ row: 1, lot: "L", procId: null, subject: "x", okpd2: "01", unit: "шт", unitName: null, method: null, quantity: 1, region: null, category: null, ws: null, vatRate: 0.22, regionName: null, regionError: null, workStart: null, workEnd: null, quarter: null }],
-      [{ row: 1, lot: "L", procId: null, status: null, priceNoVat: 1_000_000, quantity: 1, contractDate: new Date(Date.UTC(2026, 1, 10)), ws: null, vatRate: null, endDate: null, offerNoVat: null, comment: null, currency: null }],
+      [{ row: 1, lot: "L", procId: null, status: null, priceNoVat: 1_000_000, quantity: 1, contractDate: new Date(Date.UTC(2026, 1, 10)), ws: null, vatRate: null, endDate: null, offerNoVat: null, comment: null, currency: null, nmcNoVat: null }],
       r, { baseYear: 2026, targetYear: 2027 });
     expect(svc.rows[0].forecastPrice).toBe(e.forecastPrice);
     expect(svc.rows[0].vatRate).toBe(0.22);

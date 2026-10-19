@@ -13,7 +13,7 @@ const gpz = (p: Partial<GpzRow>): GpzRow => ({
 });
 const rep = (p: Partial<ReportRow>): ReportRow => ({
   row: 1, lot: "L1", procId: null, status: null, priceNoVat: 1000, quantity: 1, contractDate: new Date(Date.UTC(2026, 0, 15)), ws: null, vatRate: null,
-  endDate: null, offerNoVat: null, comment: null, currency: null, ...p,
+  endDate: null, offerNoVat: null, comment: null, currency: null, nmcNoVat: null, ...p,
 });
 const ref = (indices: PriceIndex[]) => ({ ...SEED, indices });
 const idx = [

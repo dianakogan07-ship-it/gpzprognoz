@@ -35,6 +35,11 @@ export interface ForecastRow {
   forecastIndexCons?: number;
   /** Валюта договоров группы (USD, EUR, CNY); рублёвые — пусто */
   currency?: string | null;
+  /** Медиана НМЦ 2026 за единицу без НДС и сумма НМЦ по договорам группы — для варианта «от НМЦ» и экономии на торгах */
+  nmcMedian?: number | null;
+  nmcSum?: number | null;
+  /** Сумма договоров группы, по которым известна НМЦ — для честного сравнения с nmcSum */
+  nmcContractSum?: number | null;
   indexSource: string;
   indexSourceUrl: string;
   forecastPrice: number;
@@ -120,16 +125,18 @@ export interface ContractPoint {
   quarter?: number | null;
   /** Валюта договора, если закупка валютная */
   currency?: string | null;
+  /** НМЦ за единицу без НДС (начальная цена закупки) */
+  nmc?: number | null;
 }
 /** Договор в хранилище — массивом, чтобы строка не разрасталась: [цена, месяц, год, количество, срок, рост по ДС, действует в году прогноза, месяцев в ГПЗ, квартал, ставка НДС из файла, валюта] */
 export type PackedPoint = (number | string | null)[];
 export const packPoint = (p: Partial<ContractPoint> & { raw: number; month: number | null }): PackedPoint =>
-  [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null, p.currency ?? null];
+  [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null, p.currency ?? null, p.nmc ?? null];
 export const unpackPoint = (a: PackedPoint) => {
   const n = (i: number) => (typeof a[i] === "number" ? (a[i] as number) : null);
   return {
     raw: n(0) ?? 0, month: n(1), year: n(2), qty: n(3), months: n(4), ds: n(5),
-    active: a[6] === 1, gpzMonths: n(7), quarter: n(8), vatFile: n(9), currency: typeof a[10] === "string" ? a[10] : null,
+    active: a[6] === 1, gpzMonths: n(7), quarter: n(8), vatFile: n(9), currency: typeof a[10] === "string" ? a[10] : null, nmc: n(11),
   };
 };
 export interface ExcludedRow { file: "ГПЗ" | "Отчётность"; row: number; lot: string | null; reason: string }
@@ -277,6 +284,7 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       gpzMonths: gpzMonths && months && Math.abs(gpzMonths - months) > 1 ? gpzMonths : null,
       quarter: g.quarter,
       currency: normCurrency(rep.currency),
+      nmc: rep.nmcNoVat && rep.nmcNoVat > 0 ? rep.nmcNoVat / qty : null,
     });
   }
   const rows = aggregateForecast(points, ref, opt);
@@ -446,6 +454,11 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       monthMismatch: pts.filter((p) => p.gpzMonths != null && p.months != null).map((p) => [p.gpzMonths!, p.months!] as [number, number]),
       lotPrice,
       quarters,
+      ...((withNmc) => withNmc.length ? {
+        nmcMedian: round2(median(withNmc.map((p) => p.nmc!))),
+        nmcSum: round2(withNmc.reduce((s, p) => s + p.nmc! * (p.qty ?? 0), 0)),
+        nmcContractSum: round2(withNmc.reduce((s, p) => s + p.raw * (p.qty ?? 0), 0)),
+      } : {})(pts.filter((p) => p.nmc != null && p.nmc > 0)),
       needsApproval, smallSample, flags,
       comment: [`Медиана ${items.length - outliers} дог. ${round2(base)} ₽ → ${pct(k)}`, ...notes].join("; "),
     });

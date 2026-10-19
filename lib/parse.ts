@@ -45,6 +45,8 @@ export interface ReportRow {
   comment: string | null;
   /** Валюта договора для валютных закупок: «Доллар США», «USD» */
   currency: string | null;
+  /** Начальная (максимальная) цена без НДС */
+  nmcNoVat: number | null;
 }
 
 type Matcher = RegExp[];
@@ -88,6 +90,7 @@ const REPORT_COLS: Record<string, Matcher> = {
   offerNoVat: [/(стоимост|цен)\S*\s+предложени\S*.*без\s*ндс/i],
   comment: [/коммент/i, /примечани/i],
   currency: [/наименовани\S*\s+валют/i, /^валют\S*\s*договор/i],
+  nmcNoVat: [/начальн\S*\s+(\(?максимальн\S*\)?\s+)?цен\S*.*без\s*ндс/i, /\bнмц\S*.*без\s*ндс/i],
 };
 
 const PRICE_EXCLUDE = [/начальн/i, /максимальн/i, /\bнмц/i, /валют/i, /эконом/i, /эффективн/i];
@@ -234,6 +237,7 @@ export function parseReport(buf: ArrayBuffer) {
       offerNoVat: toNumber(cell(r, c.offerNoVat)),
       comment: str(cell(r, c.comment)),
       currency: str(cell(r, c.currency)),
+      nmcNoVat: toNumber(cell(r, c.nmcNoVat)),
     });
   });
   return { rows: out, headers, columns: c };

@@ -210,7 +210,9 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
       </div>
 
       {(tab === "report" || tab === "staff") && reference && (
-        <ForecastReport key={tab} audience={tab === "staff" ? "staff" : "customer"} view={view} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
+        <ForecastReport key={tab} audience={tab === "staff" ? "staff" : "customer"} view={view}
+          forecastId={id} versionId={ver.id} excluded={f.excluded}
+          prevVersion={((p) => (p ? { id: p.id, number: p.number } : null))(f.versions.find((x) => x.number === ver.number - 1))} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
           approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null} />
       )}
       {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
