@@ -1,4 +1,11 @@
-export type IndexKind = "to_december" | "forecast" | "cpi";
+/** Виды индексов прогноза на год, у которых есть консервативный сценарий МЭР */
+export type ScenarioKind = "forecast" | "cpi" | "wage" | "fx";
+export type IndexKind = "to_december" | ScenarioKind | "minstroy" | `${ScenarioKind}_cons`;
+/** Вид индекса консервативного сценария: «forecast» → «forecast_cons» */
+export const consKind = (k: ScenarioKind) => `${k}_cons` as const;
+export const SCENARIO_KINDS: ScenarioKind[] = ["forecast", "cpi", "wage", "fx"];
+/** Все виды индексов на год прогноза (без пересчёта внутри года) */
+export const TARGET_KINDS: IndexKind[] = [...SCENARIO_KINDS, "minstroy", ...SCENARIO_KINDS.map(consKind)];
 
 export interface Source { id: number; code: string; name: string; url: string; kind: string; verified: boolean; note: string | null }
 export interface Named { id: number; name: string }
@@ -11,7 +18,7 @@ export interface RepeatRule { id: number; kind: "okpd2" | "ws"; prefix: string; 
 export interface PriceIndex {
   id: number;
   kind: IndexKind;
-  /** Префикс ОКПД2 («43», «43.2») или буква раздела ОКВЭД2 («F»); пусто — для ИПЦ */
+  /** Префикс ОКПД2 («43», «43.2») или буква раздела ОКВЭД2 («F»); код валюты («USD») — для курса; код ОКАТО региона — для Минстроя; пусто — для ИПЦ и зарплат */
   key: string | null;
   year: number;
   /** Месяц заключения договора — только для to_december */

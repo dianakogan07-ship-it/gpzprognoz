@@ -12,7 +12,7 @@ import { PromptModal } from "@/components/PromptModal";
 import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecasts/client";
 import { PICK_STATUSES, STATUS_TITLE, isFrozen, type ForecastStatus, type SnapshotIndex, type VersionStats } from "@/lib/forecasts/model";
 import { toViewRows, fmtGrowth, fmtRub, plural, type ViewRow } from "@/lib/forecastView";
-import { formatGrowth, industryLabel, MONTHS } from "@/lib/indexFormat";
+import { KIND_LABEL, formatGrowth, industryLabel, MONTHS } from "@/lib/indexFormat";
 import { contractPrice, type ExcludedRow, type ForecastRow } from "@/lib/forecast";
 import type { RowMeta } from "@/lib/forecastView";
 
@@ -22,7 +22,6 @@ interface Forecast { id: number; title: string; year: number; base_year: number;
 const PILL: Record<ForecastStatus, string> = {
   draft: "bg-violet-100 text-violet-800", review: "bg-teal-100 text-teal-800", approved: "bg-emerald-100 text-emerald-800", rejected: "bg-rose-100 text-rose-800", archived: "bg-slate-200 text-slate-700",
 };
-const KIND_TITLE = { forecast: "Рост по отрасли", cpi: "Общая инфляция", to_december: "Пересчёт до декабря" } as const;
 
 function EditModal({ v, frozen, onClose, onSave }: { v: ViewRow; frozen: boolean; onClose: () => void; onSave: (field: "forecast_price" | "index_value", value: number, reason: string) => Promise<void> }) {
   const [field, setField] = useState<"forecast_price" | "index_value">("forecast_price");
@@ -260,12 +259,12 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           footer={<button className="btn-sec" onClick={() => setShowIdx(false)}>Закрыть</button>}>
           <div className="max-h-[60vh] overflow-auto rounded-lg border border-slate-200">
             <table className="tbl">
-              <thead><tr><th>Вид</th><th>ОКПД2 / ОКВЭД2</th><th className="text-right">Значение</th><th>Источник</th><th>Получен</th></tr></thead>
+              <thead><tr><th>Вид</th><th>Код</th><th className="text-right">Значение</th><th>Источник</th><th>Получен</th></tr></thead>
               <tbody>
                 {f.snapshot.map((i) => (
                   <tr key={`${i.kind}${i.key}${i.month}${i.id}`}>
-                    <td>{KIND_TITLE[i.kind]}{i.month ? `, ${MONTHS[i.month - 1]}` : ""}{!i.approved && <span className="ml-1 text-xs text-amber-700">не утверждён</span>}</td>
-                    <td>{i.key ? (reference ? industryLabel(i.key, reference) : i.key) : "—"}</td>
+                    <td>{KIND_LABEL[i.kind]}{i.month ? `, ${MONTHS[i.month - 1]}` : ""}{!i.approved && <span className="ml-1 text-xs text-amber-700">не утверждён</span>}</td>
+                    <td>{!i.key ? "—" : i.kind.startsWith("fx") ? i.key : i.kind === "minstroy" ? reference?.regions.find((r) => r.code === i.key)?.name ?? i.key : reference ? industryLabel(i.key, reference) : i.key}</td>
                     <td className="text-right">{formatGrowth(i.value)}</td>
                     <td>{i.url ? <a className="text-brand hover:underline" href={i.url} target="_blank" rel="noreferrer">{i.source}</a> : i.source ?? "—"}</td>
                     <td>{i.loadedAt ? fmtDateTime(i.loadedAt) : "—"}</td>

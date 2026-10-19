@@ -3,13 +3,15 @@ import type { PriceIndex } from "../types";
 import { planMerCommit, summarize, type MerDoc, type MerIncoming } from "./plan";
 
 const SOURCE = "MER_FORECAST";
+/** Зарплата и курс — из таблицы макропараметров */
+const sourceOf = (kind: MerIncoming["kind"]) => (/^(wage|fx)/.test(kind) ? "MER_MACRO" : SOURCE);
 
 /** Сохранение значений прогноза МЭР: всё со статусом «Нужна проверка», утверждённые не затираются */
 export async function commitMer(doc: MerDoc, incoming: MerIncoming[]) {
   const existing = (await listTable("price_indices")) as unknown as PriceIndex[];
   const actions = planMerCommit(existing, incoming);
   const db = sql();
-  const fields = (r: MerIncoming) => [r.value, r.indicator, r.ref_deflator, r.raw_line, r.doc_page, doc.title, doc.date, SOURCE];
+  const fields = (r: MerIncoming) => [r.value, r.indicator, r.ref_deflator, r.raw_line, r.doc_page, doc.title, doc.date, sourceOf(r.kind)];
   for (const a of actions) {
     const r = a.row;
     if (a.type === "insert") {

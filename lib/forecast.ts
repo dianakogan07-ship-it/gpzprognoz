@@ -29,7 +29,12 @@ export interface ForecastRow {
   /** Медиана цены за единицу без НДС, доведённая до декабря базового года */
   basePrice: number;
   forecastIndex: number;
-  indexLevel: "okpd2" | "okved2" | "cpi";
+  /** Чем посчитан рост: отраслевой индекс, общая инфляция, рост зарплат (трудоёмкие услуги), курс валюты (валютные договоры), индекс Минстроя региона */
+  indexLevel: "okpd2" | "okved2" | "cpi" | "wage" | "fx" | "minstroy";
+  /** Рост в консервативном сценарии МЭР; нет консервативного индекса — равен базовому */
+  forecastIndexCons?: number;
+  /** Валюта договоров группы (USD, EUR, CNY); рублёвые — пусто */
+  currency?: string | null;
   indexSource: string;
   indexSourceUrl: string;
   forecastPrice: number;
@@ -113,16 +118,20 @@ export interface ContractPoint {
   gpzMonths?: number | null;
   /** Квартал проведения закупки по плану */
   quarter?: number | null;
+  /** Валюта договора, если закупка валютная */
+  currency?: string | null;
 }
-/** Договор в хранилище — массивом, чтобы строка не разрасталась: [цена, месяц, год, количество, срок, рост по ДС, действует в году прогноза, месяцев в ГПЗ, квартал, ставка НДС из файла] */
-export type PackedPoint = (number | null)[];
+/** Договор в хранилище — массивом, чтобы строка не разрасталась: [цена, месяц, год, количество, срок, рост по ДС, действует в году прогноза, месяцев в ГПЗ, квартал, ставка НДС из файла, валюта] */
+export type PackedPoint = (number | string | null)[];
 export const packPoint = (p: Partial<ContractPoint> & { raw: number; month: number | null }): PackedPoint =>
-  [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null];
-export const unpackPoint = (a: PackedPoint) => ({
-  raw: a[0] ?? 0, month: a[1] ?? null, year: a[2] ?? null, qty: a[3] ?? null, months: a[4] ?? null, ds: a[5] ?? null,
-  active: a[6] === 1, gpzMonths: a[7] ?? null, quarter: a[8] ?? null, vatFile: a[9] ?? null,
-});
-
+  [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null, p.currency ?? null];
+export const unpackPoint = (a: PackedPoint) => {
+  const n = (i: number) => (typeof a[i] === "number" ? (a[i] as number) : null);
+  return {
+    raw: n(0) ?? 0, month: n(1), year: n(2), qty: n(3), months: n(4), ds: n(5),
+    active: a[6] === 1, gpzMonths: n(7), quarter: n(8), vatFile: n(9), currency: typeof a[10] === "string" ? a[10] : null,
+  };
+};
 export interface ExcludedRow { file: "ГПЗ" | "Отчётность"; row: number; lot: string | null; reason: string }
 export interface ForecastResult {
   rows: ForecastRow[]; excluded: ExcludedRow[]; newWsCodes: string[];
@@ -133,6 +142,19 @@ export interface ForecastResult {
     /** Ставки НДС из файлов, отличные от 22 %: ставка → число строк */
     vatOther?: Record<string, number>;
   };
+}
+
+/** Трудоёмкие услуги — рост по зарплатам: охрана, уборка, питание, обучение */
+export const LABOR = ["80", "81.2", "56", "85"];
+/** Строительство и проектирование — индекс Минстроя по региону */
+export const CONSTRUCTION = ["41", "42", "43", "71.1"];
+/** Валюта из отчётности: «Доллар США», «USD» → USD; рубли и прочерк — нет */
+export function normCurrency(v: string | null): string | null {
+  const s = (v ?? "").toLowerCase();
+  if (/доллар|usd/.test(s)) return "USD";
+  if (/евро|eur/.test(s)) return "EUR";
+  if (/юан|cny|rmb/.test(s)) return "CNY";
+  return null;
 }
 
 /** Единицы, при которых количество 1 означает цену всего лота */
@@ -254,6 +276,7 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       active: !!end && end.getUTCFullYear() > opt.targetYear || (!!end && end.getUTCFullYear() === opt.targetYear && end.getUTCMonth() === 11 && end.getUTCDate() === 31),
       gpzMonths: gpzMonths && months && Math.abs(gpzMonths - months) > 1 ? gpzMonths : null,
       quarter: g.quarter,
+      currency: normCurrency(rep.currency),
     });
   }
   const rows = aggregateForecast(points, ref, opt);
@@ -266,7 +289,8 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
 }
 
 /** Ключ группы позиций прогноза: ОКПД2 + единица + регион + код WS */
-export const groupKey = (p: { okpd2: string; unit: string; region: string | null; ws: string | null }) => [p.okpd2, p.unit, p.region ?? "", p.ws ?? ""].join("|");
+export const groupKey = (p: { okpd2: string; unit: string; region: string | null; ws: string | null; currency?: string | null }) =>
+  [p.okpd2, p.unit, p.region ?? "", p.ws ?? ""].join("|") + (p.currency ? `|${p.currency}` : "");
 
 /**
  * Группировка договоров и расчёт прогноза по индексам из справочника.
@@ -276,8 +300,12 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
   const sourceByCode = new Map(ref.sources.map((s) => [s.code, s]));
   const active = ref.indices.filter(isActiveIndex);
   const toDec = active.filter((i) => i.kind === "to_december" && i.year === opt.baseYear);
-  const fc = active.filter((i) => i.kind === "forecast" && i.year === opt.targetYear);
-  const cpi = active.find((i) => i.kind === "cpi" && i.year === opt.targetYear) ?? null;
+  const at = (kind: PriceIndex["kind"]) => active.filter((i) => i.kind === kind && i.year === opt.targetYear);
+  const fc = at("forecast"), fcCons = at("forecast_cons");
+  const cpi = at("cpi")[0] ?? null, cpiCons = at("cpi_cons")[0] ?? null;
+  const wage = at("wage")[0] ?? null, wageCons = at("wage_cons")[0] ?? null;
+  const fx = at("fx"), fxCons = at("fx_cons");
+  const minstroy = at("minstroy");
 
   type Item = { p: ContractPoint; price: number; adjusted: boolean; needed: boolean };
   const groups = new Map<string, Item[]>();
@@ -335,13 +363,27 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
 
     let needsApproval = false;
     let k = 1, level: ForecastRow["indexLevel"] = "cpi", src = "";
+    let used: PriceIndex | null = null, cons: PriceIndex | null = null;
+    const byKey = (list: PriceIndex[], key: string | null) => list.find((i) => i.key === key) ?? null;
+    const fxHit = g0.currency ? byKey(fx, g0.currency) ?? byKey(fx, "USD") : null;
+    const mHit = g0.region && CONSTRUCTION.some((c) => okpdIn(okpd2, c)) ? byKey(minstroy, g0.region) : null;
     const hit = findIndex(fc, okpd2, okvedSection(okpd2, ref));
-    let used: PriceIndex | null = hit?.index ?? null;
-    if (hit) {
-      level = hit.level;
+    if (fxHit) {
+      // Валютный договор: цена в рублях зависит от курса — рост по прогнозу курса МЭР
+      level = "fx"; used = fxHit; cons = byKey(fxCons, fxHit.key);
+      notes.push(`договор в валюте (${g0.currency}) — рост курса ${fxHit.key}${fxHit.key !== g0.currency ? " как ориентир" : ""}`);
+    } else if (mHit) {
+      level = "minstroy"; used = mHit;
+      notes.push("строительство — индекс Минстроя по региону");
+    } else if (wage && LABOR.some((c) => okpdIn(okpd2, c))) {
+      // Охрана, клининг, питание, обучение: основная часть цены — зарплата персонала
+      level = "wage"; used = wage; cons = wageCons;
+      notes.push("трудоёмкая услуга — рост зарплат по прогнозу МЭР");
+    } else if (hit) {
+      used = hit.index; level = hit.level; cons = byKey(fcCons, hit.index.key);
       notes.push(level === "okpd2" ? `индекс по ОКПД2 ${hit.index.key}${okpdName(hit.index.key!) ? ` (${okpdName(hit.index.key!)})` : ""}` : `индекс по разделу ОКВЭД2 ${hit.index.key}`);
     } else {
-      used = cpi;
+      used = cpi; cons = cpiCons;
       needsApproval = true;
       notes.push(cpi ? "индекс по ОКПД2/ОКВЭД2 не найден — применён прогноз ИПЦ" : "нет ни отраслевого индекса, ни прогноза ИПЦ — цена не индексирована");
     }
@@ -378,7 +420,7 @@ export function aggregateForecast(points: ContractPoint[], ref: Reference, opt: 
       contracts: items.length, outliers,
       minPrice: round2(Math.min(...kept)), maxPrice: round2(Math.max(...kept)),
       basePrice: round2(base),
-      forecastIndex: k, indexLevel: level, indexSource: src,
+      forecastIndex: k, forecastIndexCons: cons?.value ?? k, indexLevel: level, indexSource: src, currency: g0.currency ?? null,
       indexSourceUrl: used?.source_code ? sourceByCode.get(used.source_code)?.url ?? "" : "",
       forecastPrice: round2(base * k),
       prices: keptItems.map((i) => round2(i.p.raw)).sort((a, b) => a - b),

@@ -15,6 +15,8 @@ const RELEVANT = /цен\S*\s+производител|дефлятор|потр
 
 type Edit = MerRow & { codeInput: string; percentInput: string; include: boolean };
 
+const KIND_TITLE = { forecast: "Отрасль", cpi: "Общая инфляция (ИПЦ)", wage: "Рост зарплат", fx: "Курс доллара (USD)" } as const;
+
 const toPercent = (k: number | null) => (k == null ? "" : String(Math.round((k - 1) * 1000) / 10).replace(".", ","));
 
 function problemsOf(e: Edit): string[] {
@@ -60,7 +62,8 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
       setResult(r);
       setDoc({ title: r.title ?? "", date: r.approvedDate ?? "" });
       // Сначала разобранные строки, неоднозначные — в конце
-      setRows([...r.rows].sort((a, b) => Number(a.problems.length > 0) - Number(b.problems.length > 0)).map((x) => ({ ...x, codeInput: x.kind === "cpi" ? "" : x.codeText.replace(/^Раздел\s+/, ""), percentInput: toPercent(x.value), include: !x.problems.length })));
+      setRows([...r.rows].sort((a, b) => Number(a.variant === "cons") - Number(b.variant === "cons") || Number(a.problems.length > 0) - Number(b.problems.length > 0))
+        .map((x) => ({ ...x, codeInput: x.kind === "forecast" ? x.codeText.replace(/^Раздел\s+/, "") : x.keys.join(""), percentInput: toPercent(x.value), include: !x.problems.length })));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -69,9 +72,9 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
 
   const incoming = (e: Edit): MerIncoming[] => {
     const v = 1 + Number(e.percentInput.replace(",", ".").replace("−", "-")) / 100;
-    const keys = e.kind === "cpi" ? [null] : parseCodeInput(e.codeInput);
+    const keys = e.kind === "forecast" ? parseCodeInput(e.codeInput) : e.kind === "fx" ? ["USD"] : [null];
     return keys.map((key) => ({
-      kind: e.kind, key, year: targetYear, value: Math.round(v * 100000) / 100000, indicator: e.kind === "cpi" ? null : e.indicator,
+      kind: (e.variant === "cons" ? `${e.kind}_cons` : e.kind) as MerIncoming["kind"], key, year: targetYear, value: Math.round(v * 100000) / 100000, indicator: e.kind === "forecast" ? e.indicator : null,
       ref_deflator: e.deflator, raw_line: e.raw, doc_page: e.page,
     }));
   };
@@ -80,9 +83,9 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
   const edits = rows.map((e) => {
     const problems = problemsOf(e);
     if (!problems.length && e.include) {
-      const keys = e.kind === "cpi" ? ["ИПЦ"] : parseCodeInput(e.codeInput);
+      const keys = (e.kind === "forecast" ? parseCodeInput(e.codeInput) : [KIND_TITLE[e.kind]]).map((k) => `${e.variant}:${e.kind}:${k}`);
       const dup = keys.filter((k) => taken.has(k));
-      if (dup.length) problems.push(`${e.kind === "cpi" ? "ИПЦ" : `код ${dup.join(", ")}`} уже есть в строке выше`);
+      if (dup.length) problems.push(`${e.kind === "forecast" ? `код ${dup.map((k) => k.split(":")[2]).join(", ")}` : KIND_TITLE[e.kind]} уже есть в строке выше`);
       else keys.forEach((k) => taken.add(k));
     }
     return { e, problems };
@@ -116,7 +119,7 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
       </label>
       {error && !result && <span className="text-sm text-red-600">{error}</span>}
       {result && (
-        <Modal wide title="Предпросмотр прогноза МЭР" subtitle={`${fileName} · значения на ${targetYear} год`} onClose={() => setResult(null)}
+        <Modal wide title="Предпросмотр прогноза МЭР" subtitle={`${fileName} · значения на ${targetYear} год${rows.some((r) => r.variant === "cons") ? " · базовый и консервативный варианты" : ""}`} onClose={() => setResult(null)}
           footer={<>
             <span className="mr-auto self-center text-sm text-slate-600">
               Будет сохранено: новых {counts.insert}, обновится {counts.update}, новых версий {counts.version}{counts.same ? `, без изменений ${counts.same}` : ""}
@@ -146,7 +149,8 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
                     <tr key={e.id} className={problems.length ? "bg-amber-50" : ""}>
                       <td><input type="checkbox" aria-label="Сохранять" checked={e.include && !problems.length} disabled={problems.length > 0} onChange={(ev) => set(e.id, { include: ev.target.checked })} /></td>
                       <td>
-                        {e.kind === "cpi" ? <span className="font-medium">Общая инфляция (ИПЦ)</span> : (
+                        {e.variant === "cons" && <span className="mb-1 inline-block rounded bg-violet-50 px-1.5 py-0.5 text-xs font-medium text-violet-800 ring-1 ring-violet-200">консервативный</span>}
+                        {e.kind !== "forecast" ? <span className="block font-medium">{KIND_TITLE[e.kind]}</span> : (
                           <>
                             <input className="inp" value={e.codeInput} placeholder="B или 06+09" onChange={(ev) => set(e.id, { codeInput: ev.target.value, include: true })} />
                             {keys.length > 0 && <p className="mt-1 text-xs text-slate-500">{keys.map((k) => industryLabel(k, reference)).join("; ")}</p>}
@@ -154,7 +158,7 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
                         )}
                       </td>
                       <td>
-                        {e.kind === "cpi" ? "ИПЦ" : (
+                        {e.kind !== "forecast" ? { cpi: "ИПЦ", wage: "зарплата", fx: "курс" }[e.kind] : (
                           <select className="inp" value={e.indicator ?? ""} onChange={(ev) => set(e.id, { indicator: (ev.target.value || null) as Edit["indicator"], include: true })}>
                             <option value="">— выберите —</option><option value="icp">ИЦП</option><option value="deflator">Дефлятор</option>
                           </select>

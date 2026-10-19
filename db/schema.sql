@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS repeat_rules (
 );
 CREATE TABLE IF NOT EXISTS price_indices (
   id SERIAL PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('to_december', 'forecast', 'cpi')),
+  kind TEXT NOT NULL CHECK (kind IN ('to_december', 'forecast', 'cpi', 'wage', 'fx', 'minstroy', 'forecast_cons', 'cpi_cons', 'wage_cons', 'fx_cons')),
   key TEXT,
   year INT NOT NULL,
   month INT CHECK (month BETWEEN 1 AND 12),

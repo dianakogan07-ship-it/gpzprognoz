@@ -46,13 +46,16 @@ export function Steps({ v, baseYear, sources }: { v: ViewRow; baseYear: number; 
     none: "нет данных, цена без изменений",
   }[r.toDecember];
   const name = r.indexName ? ` «${r.indexName}»` : "";
-  const idx = r.indexLevel === "okpd2" ? `индекс ОКПД2 ${r.indexKey}${name}` : r.indexLevel === "okved2" ? `индекс раздела ОКВЭД2 ${r.indexKey}` : r.indexApproved === null ? "индекс не найден" : "общая инфляция";
+  const idx = r.indexLevel === "okpd2" ? `индекс ОКПД2 ${r.indexKey}${name}` : r.indexLevel === "okved2" ? `индекс раздела ОКВЭД2 ${r.indexKey}`
+    : r.indexLevel === "wage" ? "трудоёмкая услуга — прогноз зарплат" : r.indexLevel === "fx" ? `договор в валюте — прогноз курса ${r.indexKey}`
+    : r.indexLevel === "minstroy" ? "индекс Минстроя по региону" : r.indexApproved === null ? "индекс не найден" : "общая инфляция";
+  const what = { wage: "рост зарплат", fx: "рост курса", minstroy: "рост сметной стоимости" }[r.indexLevel as string] ?? "рост отрасли";
   return (
     <div className="space-y-3 text-sm">
       <p className="leading-relaxed text-slate-700">
         <b>{n} {plural(n, "договор", "договора", "договоров")} {baseYear} года:</b> {prices} ₽ за {r.unitLabel}, медиана {fmtRub(r.rawMedian)}
         <Arrow />пересчёт до последнего месяца с данными: {dec}
-        <Arrow />рост отрасли {fmtPct(r.forecastIndex - 1)} ({idx}{src && <>, <a className="text-brand hover:underline" href={src.url} target="_blank" rel="noreferrer">{src.name}</a></>})
+        <Arrow />{what} {fmtPct(r.forecastIndex - 1)} ({idx}{src && <>, <a className="text-brand hover:underline" href={src.url} target="_blank" rel="noreferrer">{src.name}</a></>})
         <Arrow /><b className="text-slate-900">прогноз {fmtRub(r.forecastPrice)}</b>, итого рост {fmtGrowth(v.growth)}
         {intra !== 0 && <span className="text-slate-500"> = (1 {intra < 0 ? "−" : "+"} {fmtNum2(Math.abs(intra) * 100)} %) × (1 {r.forecastIndex < 1 ? "−" : "+"} {fmtNum2(Math.abs(r.forecastIndex - 1) * 100)} %) − 1</span>}
       </p>
@@ -340,6 +343,9 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
               <div key={l} className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">{l}</p><p className="font-semibold text-slate-900">{val}</p></div>
             ))}
           </div>
+          {card.row.forecastIndexCons != null && Math.abs(card.row.forecastIndexCons - card.row.forecastIndex) > 1e-6 && (
+            <p className="text-sm text-slate-600">Консервативный сценарий МЭР: <b className="text-slate-900">{fmtRub(Math.round(card.row.forecastPrice * card.row.forecastIndexCons / card.row.forecastIndex * 100) / 100)}</b> без НДС, итого рост {fmtGrowth(Math.round((card.row.forecastPrice * card.row.forecastIndexCons / card.row.forecastIndex / contractPrice(card.row) - 1) * 1000) / 10)}</p>
+          )}
           <p className="text-xs text-slate-500">за {card.row.unitLabel} · по {card.row.contracts} {plural(card.row.contracts, "договору", "договорам", "договорам")} {baseYear} года</p>
           <Steps v={card} baseYear={baseYear} sources={sources} />
           {(card.reasons.length > 0 || card.meta?.edited) && (

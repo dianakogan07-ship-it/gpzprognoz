@@ -5,9 +5,9 @@ import { Modal } from "@/components/Modal";
 import { IconCheck, IconDownload, IconEdit, IconPlus, IconTrash, IconUpload } from "@/components/Icons";
 import { downloadWorkbook, indexTemplate, parseIndexFile, type IndexParseError } from "@/lib/excel";
 import {
-  COVERAGE_KEY, MONTHS, coefToPercent, formatGrowth, industryLabel, industryName, percentToCoef, type Coverage,
+  COVERAGE_KEY, KEY_TITLE, MONTHS, keyType, coefToPercent, formatGrowth, industryLabel, industryName, percentToCoef, type Coverage,
 } from "@/lib/indexFormat";
-import type { IndexKind, PriceIndex, Reference } from "@/lib/types";
+import { SCENARIO_KINDS, consKind, type IndexKind, type PriceIndex, type Reference, type ScenarioKind } from "@/lib/types";
 import { findIndex, okvedSection } from "@/lib/forecast";
 import { isActiveIndex } from "@/lib/types";
 import { MerImportButton } from "@/components/MerImport";
@@ -22,6 +22,12 @@ const tabsFor = (target: number): Tab[] => [
     empty: "Отраслевые индексы делают прогноз точнее: цены на стройматериалы, ИТ-услуги или топливо растут по-разному. Без них все позиции считаются по общей инфляции и требуют согласования." },
   { kind: "cpi", title: `Общая инфляция ${target}`, hint: "Применяется к позициям, для которых нет отраслевого индекса. Такие позиции требуют согласования.",
     empty: "Общая инфляция — запасной вариант: она применяется, когда для отрасли нет своего индекса. Без неё такие позиции останутся без пересчёта на следующий год." },
+  { kind: "wage", title: `Рост зарплат ${target}`, hint: "Для трудоёмких услуг — охрана (80), уборка (81.2), питание (56), обучение (85): основная часть их цены — зарплата персонала, а она растёт не так, как потребительские цены.",
+    empty: "Без прогноза зарплат трудоёмкие услуги считаются по отраслевому индексу или общей инфляции — рост может быть занижен." },
+  { kind: "fx", title: `Курс валют ${target}`, hint: "Для договоров в валюте (колонка «Наименование валюты» в отчётности): цена в рублях следует за курсом. Код — USD, EUR или CNY; если нужной валюты нет, берётся доллар.",
+    empty: "Без прогноза курса валютные договоры считаются как рублёвые." },
+  { kind: "minstroy", title: "Стройка по регионам", hint: "Индексы изменения сметной стоимости Минстроя по субъектам РФ. Применяются к строительству и проектированию (ОКПД2 41, 42, 43, 71.1) в своём регионе вместо общего индекса «Строительство».",
+    empty: "Строительство — самая крупная часть ГПЗ. Без региональных индексов Минстроя оно считается по общему индексу для всей страны." },
   { kind: "to_december", title: "Перерасчёт цен по месяцам", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
     empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня последнего месяца с данными Росстата, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
 ];
@@ -79,11 +85,12 @@ function IndexForm({ tab, draft, reference, onClose, onSaved }: {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (p: Partial<Draft>) => setD({ ...d, ...p });
-  const needsKey = tab.kind !== "cpi";
+  const kt = keyType(tab.kind);
+  const needsKey = kt !== "none";
   const pct = Number(d.percent.replace(",", ".").replace("−", "-"));
 
   async function save() {
-    if (needsKey && !d.key) return setError("Выберите отрасль");
+    if (needsKey && !d.key) return setError(kt === "currency" ? "Выберите валюту" : kt === "region" ? "Выберите регион" : "Выберите отрасль");
     if (!d.year) return setError("Укажите год");
     if (d.percent.trim() === "" || !Number.isFinite(pct) || pct <= -100) return setError("Укажите рост в процентах, например 4,5");
     const body = {
@@ -105,8 +112,21 @@ function IndexForm({ tab, draft, reference, onClose, onSaved }: {
   return (
     <Modal title={d.id ? "Изменить индекс" : "Новый индекс"} subtitle={tab.title} onClose={onClose}
       footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={busy} onClick={save}>{busy ? "Сохранение…" : "Сохранить"}</button></>}>
-      {needsKey && (
+      {kt === "industry" && (
         <div><span className="field-label">Отрасль (ОКПД2 или раздел ОКВЭД2)</span><IndustryPicker value={d.key} onChange={(key) => set({ key })} reference={reference} /></div>
+      )}
+      {kt === "currency" && (
+        <div><label className="field-label" htmlFor="f-cur">Валюта</label>
+          <select id="f-cur" className="inp py-2" value={d.key} onChange={(e) => set({ key: e.target.value })}>
+            <option value="">— выберите —</option>{[["USD", "Доллар США"], ["EUR", "Евро"], ["CNY", "Юань"]].map(([c, n]) => <option key={c} value={c}>{c} — {n}</option>)}
+          </select></div>
+      )}
+      {kt === "region" && (
+        <div><label className="field-label" htmlFor="f-reg">Регион</label>
+          <select id="f-reg" className="inp py-2" value={d.key} onChange={(e) => set({ key: e.target.value })}>
+            <option value="">— выберите —</option>
+            {[...reference.regions].sort((a, b) => a.name.localeCompare(b.name, "ru")).map((r) => <option key={r.code} value={r.code}>{r.name} ({r.code})</option>)}
+          </select></div>
       )}
       <div className="grid grid-cols-2 gap-4">
         {tab.kind === "to_december" && (
@@ -149,7 +169,8 @@ function DataLinks({ indices }: { indices: PriceIndex[] }) {
     const ts = indices.filter((i) => i.source_code && codes.includes(i.source_code) && i.loaded_at).map((i) => Date.parse(i.loaded_at!)).filter(Number.isFinite);
     return ts.length ? new Date(Math.max(...ts)).toLocaleDateString("ru-RU") : null;
   };
-  const groups: [string, IndexKind][] = [["Рост цен по отраслям и общая инфляция", "forecast"], ["Перерасчёт цен по месяцам", "to_december"]];
+  const groups: [string, IndexKind][] = [["Рост цен по отраслям и общая инфляция (базовый и консервативный)", "forecast"], ["Рост зарплат", "wage"], ["Курс валют", "fx"],
+    ["Стройка по регионам (Минстрой)", "minstroy"], ["Перерасчёт цен по месяцам", "to_december"]];
   return (
     <div className="space-y-5">
       {groups.map(([title, kind]) => (
@@ -198,9 +219,15 @@ export default function IndicesPage() {
   const [tabKind, setTabKind] = useState<IndexKind>("forecast");
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("tab");
-    if (t === "forecast" || t === "cpi" || t === "to_december") setTabKind(t);
+    if (t && ["forecast", "cpi", "wage", "fx", "minstroy", "to_december"].includes(t)) setTabKind(t as IndexKind);
   }, []);
-  const tab = tabs.find((t) => t.kind === tabKind)!;
+  // Консервативный сценарий МЭР — те же вкладки, свой вид индекса
+  const [cons, setCons] = useState(false);
+  const hasScenario = (SCENARIO_KINDS as IndexKind[]).includes(tabKind);
+  const kind: IndexKind = cons && hasScenario ? consKind(tabKind as ScenarioKind) : tabKind;
+  const tab0 = tabs.find((t) => t.kind === tabKind)!;
+  const tab = { ...tab0, kind, title: cons && hasScenario ? `${tab0.title}, консервативный сценарий` : tab0.title };
+  const kt = keyType(kind);
   const [onlyPending, setOnlyPending] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [form, setForm] = useState<Draft | null>(null);
@@ -220,15 +247,15 @@ export default function IndicesPage() {
   const [yearSel, setYearSel] = useState<number | null>(null);
   const defYear = (k: IndexKind) => (k === "to_december" ? target - 1 : target);
   const yearsOf = (k: IndexKind) => [...new Set(indices.filter((i) => i.kind === k).map((i) => i.year))].sort((a, b) => b - a);
-  const years = yearsOf(tabKind);
+  const years = yearsOf(kind);
   const yearOf = (k: IndexKind, sel: number | null) => {
     const ys = yearsOf(k);
     return sel != null && ys.includes(sel) ? sel : ys.includes(defYear(k)) ? defYear(k) : ys[0] ?? defYear(k);
   };
-  const year = yearOf(tabKind, yearSel);
+  const year = yearOf(kind, yearSel);
   const lastMonth = lastDataMonth(indices, year);
   const rows = indices
-    .filter((i) => i.kind === tabKind && i.year === year && (!onlyPending || !i.approved))
+    .filter((i) => i.kind === kind && i.year === year && (!onlyPending || !i.approved))
     .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0)
       || (a.pending_of ? 1 : 0) - (b.pending_of ? 1 : 0));
   const sourceOf = (code: string | null) => (code ? reference?.sources.find((s) => s.code === code) : undefined);
@@ -288,7 +315,7 @@ export default function IndicesPage() {
     );
   };
   // Рост по отраслям: раздел ОКВЭД2 (буква) → виды продукции по кодам ОКПД2 (цифры)
-  const colCount = (canEdit ? 2 : 0) + (tab.kind !== "cpi" ? 1 : 0) + (tab.kind === "to_december" ? 1 : 0) + 5;
+  const colCount = (canEdit ? 2 : 0) + (kt !== "none" ? 1 : 0) + (tab.kind === "to_december" ? 1 : 0) + 5;
   const divOf = (k: string | null) => (k && /^\d{2}/.test(k) ? Number(k.slice(0, 2)) : null);
   const sections = tabKind === "forecast" && reference
     ? reference.okved2.map((sec) => ({
@@ -307,7 +334,7 @@ export default function IndicesPage() {
                     {canEdit && <td><input type="checkbox" checked={selected.has(ix.id)} onChange={() => {
                       const s = new Set(selected); if (s.has(ix.id)) s.delete(ix.id); else s.add(ix.id); setSelected(s);
                     }} /></td>}
-                    {tab.kind !== "cpi" && <td className={nested ? "text-slate-500" : ""}>{label ?? (nested ? "" : reference ? industryLabel(ix.key, reference) : ix.key)}</td>}
+                    {kt !== "none" && <td className={nested ? "text-slate-500" : ""}>{label ?? (nested ? "" : kt === "currency" ? ix.key : kt === "region" ? `${reference?.regions.find((r) => r.code === ix.key)?.name ?? ""} (${ix.key})` : reference ? industryLabel(ix.key, reference) : ix.key)}</td>}
                     {tab.kind === "to_december" && <td>{ix.month ? MONTHS[ix.month - 1] : "—"}</td>}
                     <td>{ix.year}</td>
                     <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
@@ -335,7 +362,7 @@ export default function IndicesPage() {
     );
   };
 
-  useEffect(() => setSelected(new Set()), [tabKind, onlyPending, year]);
+  useEffect(() => setSelected(new Set()), [kind, onlyPending, year]);
 
   async function approve(ids: number[]) {
     setBusy(true);
@@ -443,7 +470,10 @@ export default function IndicesPage() {
         {pendingTotal > 0 && (
           <button onClick={() => {
             const next = !onlyPending; setOnlyPending(next);
-            if (next && !indices.some((i) => i.kind === tabKind && !i.approved)) setTabKind(indices.find((i) => !i.approved)!.kind);
+            if (next && !indices.some((i) => i.kind === kind && !i.approved)) {
+              const k = indices.find((i) => !i.approved)!.kind;
+              setCons(k.endsWith("_cons")); setTabKind(k.replace(/_cons$/, "") as IndexKind);
+            }
           }} className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition ${onlyPending ? "bg-amber-100 text-amber-900 ring-amber-300" : "bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100"}`}>
             {pendingTotal} {plural(pendingTotal, "индекс ждёт", "индекса ждут", "индексов ждут")} проверки
             <span className="text-xs font-normal">{onlyPending ? "· показать все" : "· показать"}</span>
@@ -452,7 +482,7 @@ export default function IndicesPage() {
 
         <div className="flex flex-wrap gap-1 border-b border-slate-200">
           {tabs.map((t) => {
-            const list = indices.filter((i) => i.kind === t.kind && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved));
+            const list = indices.filter((i) => (i.kind === t.kind || i.kind === `${t.kind}_cons`) && i.year === yearOf(t.kind, null) && (!onlyPending || !i.approved));
             // По месяцам считаем отрасли, а не строки
             const n = t.kind === "to_december" ? new Set(list.map((i) => i.key)).size : list.length;
             return (
@@ -466,6 +496,18 @@ export default function IndicesPage() {
           })}
         </div>
 
+        {hasScenario && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-600">Сценарий МЭР:</span>
+            {([[false, "Базовый"], [true, "Консервативный"]] as const).map(([c, l]) => (
+              <button key={l} type="button" onClick={() => { setCons(c); setYearSel(null); }}
+                className={`rounded-lg border px-3 py-1 ${cons === c ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                {l} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === (c ? consKind(tabKind as ScenarioKind) : tabKind) && (!onlyPending || !i.approved)).length}</span>
+              </button>
+            ))}
+            <span className="hint">{cons ? "Прогноз считается по базовому; консервативный показан вторым вариантом — в карточке позиции и в отчёте." : "По базовому сценарию считается прогноз."}</span>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <p className="hint max-w-3xl">{tabKind === "to_december" && lastMonth
@@ -477,7 +519,7 @@ export default function IndicesPage() {
                 {years.map((y) => (
                   <button key={y} type="button" onClick={() => setYearSel(y)}
                     className={`rounded-lg border px-3 py-1 ${y === year ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                    {y} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === tabKind && i.year === y && (!onlyPending || !i.approved)).length}</span>
+                    {y} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === kind && i.year === y && (!onlyPending || !i.approved)).length}</span>
                   </button>
                 ))}
               </div>
@@ -512,7 +554,7 @@ export default function IndicesPage() {
             <thead>
               <tr>
                 {canEdit && <th className="w-8"><input type="checkbox" checked={allChecked} onChange={() => setSelected(allChecked ? new Set() : new Set(rows.map((r) => r.id)))} /></th>}
-                {tab.kind !== "cpi" && <th>Отрасль</th>}
+                {kt !== "none" && <th>{KEY_TITLE[kt]}</th>}
                 {tab.kind === "to_december" && <th>Месяц договора</th>}
                 <th>Год</th>
                 <th className="text-right">Рост</th>

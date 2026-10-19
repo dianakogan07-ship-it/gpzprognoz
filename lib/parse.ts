@@ -43,6 +43,8 @@ export interface ReportRow {
   /** Предложение победителя без НДС — для сравнения с суммой договора после допсоглашений */
   offerNoVat: number | null;
   comment: string | null;
+  /** Валюта договора для валютных закупок: «Доллар США», «USD» */
+  currency: string | null;
 }
 
 type Matcher = RegExp[];
@@ -85,6 +87,7 @@ const REPORT_COLS: Record<string, Matcher> = {
   endDate: [/дат\S*\s+окончани/i, /срок\S*\s+(действи|исполнени)/i],
   offerNoVat: [/(стоимост|цен)\S*\s+предложени\S*.*без\s*ндс/i],
   comment: [/коммент/i, /примечани/i],
+  currency: [/наименовани\S*\s+валют/i, /^валют\S*\s*договор/i],
 };
 
 const PRICE_EXCLUDE = [/начальн/i, /максимальн/i, /\bнмц/i, /валют/i, /эконом/i, /эффективн/i];
@@ -230,6 +233,7 @@ export function parseReport(buf: ArrayBuffer) {
       endDate: toDate(cell(r, c.endDate)),
       offerNoVat: toNumber(cell(r, c.offerNoVat)),
       comment: str(cell(r, c.comment)),
+      currency: str(cell(r, c.currency)),
     });
   });
   return { rows: out, headers, columns: c };

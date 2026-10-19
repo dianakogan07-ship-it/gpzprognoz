@@ -29,6 +29,12 @@ export function avgGrowth(rows: ForecastRow[]): number {
   return base ? (fc / base - 1) * 100 : 0;
 }
 
+/** Во сколько раз консервативный сценарий МЭР выше базового для позиции; нет консервативного индекса — 1 */
+export const consRatio = (r: ForecastRow) => (r.forecastIndexCons && r.forecastIndex ? r.forecastIndexCons / r.forecastIndex : 1);
+/** Строки с ценами консервативного сценария — для диапазона «базовый — консервативный» */
+export const consRows = (rows: ForecastRow[]) => rows.map((r) => ({ ...r, forecastPrice: r.forecastPrice * consRatio(r) }));
+export const hasCons = (rows: ForecastRow[]) => rows.some((r) => Math.abs(consRatio(r) - 1) > 1e-6);
+
 /** Рост внутри года по позиции: пересчёт до последнего месяца с данными; без пересчёта — 0 */
 export const intraYear = (r: ForecastRow) =>
   (r.toDecember === "applied" || r.toDecember === "partial") && r.rawMedian > 0 ? r.basePrice / r.rawMedian - 1 : 0;

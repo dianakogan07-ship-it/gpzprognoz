@@ -5,7 +5,7 @@ import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
 import { EMPTY_FILTERS, filterRows, regionKey, type ViewRow } from "@/lib/forecastView";
 import { lastDataMonth } from "@/lib/logic";
-import { RC, evenCeil, fmtMoney, fmtNum, fmtPct, groupSplit, shortRegion, splitGrowth, sumBase, sumForecast, ticks } from "@/lib/report";
+import { RC, avgGrowth, consRatio, consRows, hasCons, evenCeil, fmtMoney, fmtNum, fmtPct, groupSplit, shortRegion, splitGrowth, sumBase, sumForecast, ticks } from "@/lib/report";
 import { contractPrice } from "@/lib/forecast";
 import { isActiveIndex, type Reference } from "@/lib/types";
 import type { ForecastRow } from "@/lib/forecast";
@@ -87,6 +87,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
     add("Сводка", [...head,
       ["Показатель", "Значение", "Ед."],
       [`Средний рост цен в ${year}`, p1(total.total), "%"],
+      ...(hasCons(rows) ? [[`Средний рост цен в ${year}, консервативный сценарий МЭР`, p1(avgGrowth(consRows(rows))), "%"]] : []),
       ...(cpi != null ? [[`Инфляция, прогноз ${cpiSource} на ${year}`, p1(cpi), "%"]] : []),
       ["Позиций", rows.length, "шт."],
       ["Предметов закупки", subjects.length, "шт."],
@@ -95,15 +96,15 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
       ["Из чего складывается рост", "Значение", "Ед."],
       [`Цена договоров ${baseYear} (медиана, без НДС)`, 100, "%"],
       [`Рост цен в ${baseYear} — пересчёт до последнего месяца с данными (Росстат)`, p1(total.intra), "п.п."],
-      [`Рост отрасли в ${year} (прогноз МЭР)`, p1(total.industry), "п.п."],
+      [`Рост в ${year}: отрасль, зарплаты, курс, Минстрой`, p1(total.industry), "п.п."],
       [`Прогноз ${year} к цене договоров ${baseYear}`, p1(100 + total.total), "%"],
     ], [62, 14, 8]);
     add("Рост по категориям", [...head,
-      ["Категория", `Рост цен в ${baseYear}, п.п.`, `Рост отрасли в ${year}, п.п.`, "Итого рост, %"],
+      ["Категория", `Рост цен в ${baseYear}, п.п.`, `Рост в ${year}, п.п.`, "Итого рост, %"],
       ...cats.map((c) => [c.key || "Без категории", p1(c.intra), p1(c.industry), p1(c.total)]),
     ], [48, 18, 20, 14]);
     add("Рост по предметам", [...head,
-      ["Предмет закупки", `Рост цен в ${baseYear}, п.п.`, `Рост отрасли в ${year}, п.п.`, "Итого рост, %"],
+      ["Предмет закупки", `Рост цен в ${baseYear}, п.п.`, `Рост в ${year}, п.п.`, "Итого рост, %"],
       ...subjects.map((g) => [g.key, p1(g.intra), p1(g.industry), p1(g.total)]),
     ], [60, 18, 20, 14]);
     const reg = regionTable(rows).filter((x) => x.regs.length >= 2);
@@ -119,6 +120,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         ["Категория", `Сумма ${baseYear}, ₽ без НДС`, `Потребность ${year}, ₽ без НДС`, "Прирост, ₽", "Рост, %"],
         ...money.cats.map((c) => [c.key || "Без категории", r0(c.base), r0(c.fc), r0(c.fc - c.base), p1(c.base ? (c.fc / c.base - 1) * 100 : 0)]),
         ["Итого", r0(money.base), r0(money.fc), r0(money.fc - money.base), p1(money.base ? (money.fc / money.base - 1) * 100 : 0)],
+        ...(money.cons ? [["Итого, консервативный сценарий МЭР", r0(money.base), r0(money.fcCons), r0(money.fcCons - money.base), p1(money.base ? (money.fcCons / money.base - 1) * 100 : 0)]] : []),
       ], [48, 22, 24, 18, 10]);
       add("Топ-10 по приросту", [...head,
         ["Позиция", "Регион", "ОКПД2", `Сумма ${baseYear}, ₽`, `Потребность ${year}, ₽`, "Прирост, ₽"],
@@ -178,6 +180,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
                 <p className="text-xs text-white/75">Средний рост цен в {year}</p>
                 <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(total.total)}</p>
                 <p className="text-[11.5px] text-white/75">{cpi != null ? `инфляция, прогноз ${cpiSource}: ${fmtPct(cpi)}` : "прогноза инфляции в базе нет"}</p>
+                {hasCons(rows) && <p className="mt-0.5 text-[11.5px] text-white/90">консервативный сценарий МЭР: {fmtPct(avgGrowth(consRows(rows)))}</p>}
               </div>
               {cpi != null && <Kpi label="Дороже инфляции" value={<>{above} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>из {subjects.length}</small></>}
                 note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %${aboveShare != null ? ` — это ${fmtNum(aboveShare, 0)} % суммы ГПЗ` : ""}`} />}
@@ -258,6 +261,7 @@ export function moneyData(view: ViewRow[]) {
   const withSum = rows.filter((r) => sumBase(r) != null);
   const base = withSum.reduce((s, r) => s + sumBase(r)!, 0);
   const fc = withSum.reduce((s, r) => s + sumForecast(r)!, 0);
+  const fcCons = withSum.reduce((s, r) => s + sumForecast(r)! * consRatio(r), 0);
   const catMap = new Map<string, { base: number; fc: number }>();
   for (const r of withSum) {
     const e = catMap.get(r.category ?? "") ?? { base: 0, fc: 0 };
@@ -273,13 +277,16 @@ export function moneyData(view: ViewRow[]) {
     { label: "изменено вручную", c: RC.warn, v: share((v) => !!v.meta?.edited) },
     { label: "отраслевой индекс по коду ОКПД2", c: RC.navy, v: share((v) => !v.meta?.edited && v.row.indexLevel === "okpd2") },
     { label: "индекс раздела ОКВЭД2", c: RC.blue, v: share((v) => !v.meta?.edited && v.row.indexLevel === "okved2") },
+    { label: "рост зарплат (трудоёмкие услуги)", c: RC.teal, v: share((v) => !v.meta?.edited && v.row.indexLevel === "wage") },
+    { label: "Минстрой по региону (стройка)", c: RC.violet, v: share((v) => !v.meta?.edited && v.row.indexLevel === "minstroy") },
+    { label: "курс валюты (валютные договоры)", c: RC.ink2, v: share((v) => !v.meta?.edited && v.row.indexLevel === "fx") },
     { label: "общая инфляция", c: RC.sky, v: share((v) => !v.meta?.edited && v.row.indexLevel === "cpi") },
   ];
   const quarters = [0, 1, 2, 3].map((q) => rows.reduce((s, r) => s + (r.quarters?.[q] ?? 0), 0));
   const dsByCat = new Map<string, number[]>();
   for (const r of rows) if (r.dsUp?.length) dsByCat.set(r.category ?? "", [...(dsByCat.get(r.category ?? "") ?? []), ...r.dsUp]);
   return {
-    hasSums: withSum.length > 0, partial: withSum.length < rows.length, base, fc, cats, top, trust, byWeight: base > 0, quarters,
+    hasSums: withSum.length > 0, partial: withSum.length < rows.length, base, fc, fcCons, cons: hasCons(withSum) && Math.abs(fcCons - fc) >= Math.max(1, fc * 0.0005), cats, top, trust, byWeight: base > 0, quarters,
     ds: [...dsByCat.entries()].map(([k, xs]) => ({ key: k, n: xs.length, avg: (xs.reduce((s, x) => s + x, 0) / xs.length) * 100 })),
     active: rows.reduce((s, r) => s + (r.activeTarget ?? 0), 0),
     long: rows.reduce((s, r) => s + (r.longContracts ?? 0), 0),
@@ -309,7 +316,8 @@ function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year:
       {!m.hasSums ? <p className="text-sm" style={{ color: RC.muted }}>В этой версии не сохранено количество — суммы появятся после повторной загрузки файлов ГПЗ и отчётности.</p> : <>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <Kpi label={`Сумма ГПЗ ${baseYear}`} value={fmtMoney(m.base)} note="по ценам договоров" />
-          <Kpi label={`Потребность ${year}`} value={fmtMoney(m.fc)} note={`по прогнозным ценам, ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)}`} />
+          <Kpi label={`Потребность ${year}`} value={m.cons ? <>{fmtMoney(m.fc)} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>– {fmtMoney(m.fcCons)}</small></> : fmtMoney(m.fc)}
+            note={m.cons ? `базовый ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)} – консервативный ${fmtPct(m.base ? (m.fcCons / m.base - 1) * 100 : 0)} сценарий МЭР` : `по прогнозным ценам, ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)}`} />
           <Kpi label="Прирост" value={fmtMoney(m.fc - m.base)} note={m.partial ? "часть позиций без количества не учтена" : "при том же объёме закупок"} />
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
@@ -404,7 +412,7 @@ function Legend({ year, baseYear, cpi, extra }: { year: number; baseYear: number
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]" style={{ color: RC.ink2 }}>
       <span className="inline-flex items-center gap-1.5">{sq(RC.sky)}рост цен в {baseYear}</span>
-      <span className="inline-flex items-center gap-1.5">{sq(RC.blue)}рост отрасли в {year}</span>
+      <span className="inline-flex items-center gap-1.5">{sq(RC.blue)}рост в {year}</span>
       {cpi != null && <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 border-l-2 border-dashed" style={{ borderColor: RC.navy }} />инфляция {fmtNum(cpi)}&nbsp;%</span>}
       {extra}
     </div>
@@ -422,13 +430,13 @@ function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: numbe
     { from: floor, to: 100, color: RC.navy, label: "100 %", brk: true, tip: `Медианная цена договоров ${baseYear} без НДС принята за 100 %` },
     { from: 100, to: 100 + split.intra, color: RC.sky, label: fmtPct(split.intra), tip: `Пересчёт цены договора до последнего месяца с данными Росстата: ${fmtPct(split.intra)}` },
     // Рост отрасли начисляется на уже выросшую цену: подпись — сам рост отрасли, высота столбика — его вклад в п.п. от цены договора
-    { from: 100 + split.intra, to: 100 + split.total, color: RC.blue, label: fmtPct(rate), tip: `Рост цен в отрасли в ${year} по прогнозу: ${fmtPct(rate)} к уже выросшей цене (${fmtNum(split.industry)} п.п. от цены договора). Итого: (1 ${split.intra < 0 ? "−" : "+"} ${fmtNum(Math.abs(split.intra), 2)} %) × (1 ${rate < 0 ? "−" : "+"} ${fmtNum(Math.abs(rate), 2)} %) − 1 = ${fmtPct(split.total)}` },
+    { from: 100 + split.intra, to: 100 + split.total, color: RC.blue, label: fmtPct(rate), tip: `Рост цен в ${year} (отраслевые индексы, зарплаты, курс, Минстрой): ${fmtPct(rate)} к уже выросшей цене (${fmtNum(split.industry)} п.п. от цены договора). Итого: (1 ${split.intra < 0 ? "−" : "+"} ${fmtNum(Math.abs(split.intra), 2)} %) × (1 ${rate < 0 ? "−" : "+"} ${fmtNum(Math.abs(rate), 2)} %) − 1 = ${fmtPct(split.total)}` },
     { from: floor, to: 100 + split.total, color: RC.violet, label: `${fmtNum(100 + split.total)} %`, inside: true, brk: true, tip: `Прогноз цены ${year} к цене договоров ${baseYear}` },
   ];
   const caps: [string, string][] = [
     [`Цена договоров ${baseYear}`, "медиана, без НДС"],
     [`Рост цен в ${baseYear}`, `Росстат${lastMonth ? `, до ${MONTHS_GEN[lastMonth - 1]}` : ""}`],
-    [`Рост отрасли в ${year}`, "прогноз МЭР"],
+    [`Рост в ${year}`, "МЭР, Минстрой"],
     [`Прогноз ${year}`, `к цене договоров ${baseYear}`],
   ];
   return (
@@ -496,7 +504,7 @@ function Axis({ min, max, values }: { min: number; max: number; values: number[]
 }
 
 const tipOf = (name: string, g: Group, year: number, baseYear: number) =>
-  `${name}: рост цен в ${baseYear} ${fmtPct(g.intra)} + рост отрасли в ${year} ${fmtPct(g.industry)} = ${fmtPct(g.total)}`;
+  `${name}: рост цен в ${baseYear} ${fmtPct(g.intra)} + рост в ${year} ${fmtPct(g.industry)} = ${fmtPct(g.total)}`;
 
 /** Бары по категориям: название, бар, итог и разложение */
 function StackedBars({ groups, cpi, year, baseYear, parts, labelWidth }: {

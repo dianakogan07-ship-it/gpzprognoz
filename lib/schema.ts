@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS repeat_rules (
 );
 CREATE TABLE IF NOT EXISTS price_indices (
   id SERIAL PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('to_december', 'forecast', 'cpi')),
+  kind TEXT NOT NULL CHECK (kind IN ('to_december', 'forecast', 'cpi', 'wage', 'fx', 'minstroy', 'forecast_cons', 'cpi_cons', 'wage_cons', 'fx_cons')),
   key TEXT,
   year INT NOT NULL,
   month INT CHECK (month BETWEEN 1 AND 12),
@@ -155,6 +155,13 @@ ALTER TABLE forecast_versions ADD CONSTRAINT forecast_versions_status_check CHEC
 ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS excluded_rows JSONB NOT NULL DEFAULT '[]';
 -- Названия групп ОКПД2, по которым есть отраслевые индексы
 INSERT INTO okpd2 (code, name) VALUES ('19.2', 'Нефтепродукты'), ('24.4', 'Металлы основные драгоценные и цветные прочие, ядерное топливо') ON CONFLICT (code) DO NOTHING;
+-- Новые виды индексов: зарплаты, курс валют, Минстрой по регионам и консервативный сценарий МЭР
+ALTER TABLE price_indices DROP CONSTRAINT IF EXISTS price_indices_kind_check;
+ALTER TABLE price_indices ADD CONSTRAINT price_indices_kind_check CHECK (kind IN ('to_december', 'forecast', 'cpi', 'wage', 'fx', 'minstroy', 'forecast_cons', 'cpi_cons', 'wage_cons', 'fx_cons'));
+INSERT INTO sources (code, name, url, kind, verified, note) VALUES
+  ('MER_MACRO', 'Минэкономразвития — прогноз социально-экономического развития: зарплата и курс доллара (основные макропараметры)', 'https://www.economy.gov.ru/material/directions/makroec/prognozy_socialno_ekonomicheskogo_razvitiya/', 'wage', TRUE, 'Среднемесячная начисленная зарплата и курс доллара, базовый и консервативный варианты'),
+  ('FGIS_CS', 'ФГИС ЦС Минстроя России — индексы изменения сметной стоимости строительства по субъектам РФ', 'https://fgiscs.minstroyrf.ru', 'minstroy', TRUE, 'Ежеквартальные индексы по регионам, письма Минстроя')
+  ON CONFLICT (code) DO NOTHING;
 -- Отпечаток загруженных файлов: повторная загрузка тех же файлов требует подтверждения
 ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS files_hash TEXT;
 -- Средний рост считается от цены договоров (а не от цены после пересчёта внутри года): пересчёт итогов сохранённых версий

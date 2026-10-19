@@ -5,7 +5,20 @@ export const KIND_LABEL: Record<IndexKind, string> = {
   forecast: "Рост по отрасли",
   cpi: "Общая инфляция",
   to_december: "Пересчёт до декабря",
+  wage: "Рост зарплат",
+  fx: "Курс валюты",
+  minstroy: "Стройка по регионам (Минстрой)",
+  forecast_cons: "Рост по отрасли, консервативный",
+  cpi_cons: "Общая инфляция, консервативный",
+  wage_cons: "Рост зарплат, консервативный",
+  fx_cons: "Курс валюты, консервативный",
 };
+
+/** Что указывается в коде индекса: отрасль, валюта, регион или ничего (ИПЦ, зарплаты по стране) */
+export type KeyType = "industry" | "currency" | "region" | "none";
+export const keyType = (k: IndexKind): KeyType =>
+  k === "cpi" || k === "cpi_cons" || k === "wage" || k === "wage_cons" ? "none" : k === "fx" || k === "fx_cons" ? "currency" : k === "minstroy" ? "region" : "industry";
+export const KEY_TITLE: Record<KeyType, string> = { industry: "Отрасль", currency: "Валюта", region: "Регион", none: "" };
 
 export const MONTHS = ["январь", "февраль", "март", "апрель", "май", "июнь", "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"];
 

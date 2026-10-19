@@ -14,7 +14,7 @@ interface Explain {
   okpd2: string; contracts: number; months: number[];
   price: number;
   step2: { state: "off" | "applied" | "partial" | "none" | "not_needed"; coef: number | null; lastMonth: number | null; idx: IndexRef | null };
-  step3: { branch: "industry" | "cpi" | "none"; level: "okpd2" | "okved2" | "cpi"; idx: IndexRef | null; needsApproval: boolean };
+  step3: { branch: "industry" | "cpi" | "none"; level: ForecastRow["indexLevel"]; idx: IndexRef | null; needsApproval: boolean };
   basePrice: number; forecastPrice: number;
   vat: number; vatFromFile: boolean; withVat: number; vatFile?: number | null;
   edited?: boolean;
@@ -119,10 +119,10 @@ export default function LogicPage() {
       info: s2.state === "off" ? <>Индексы перерасчёта по месяцам за {by} год не загружены — шаг пропущен.</>
         : <>Росстат, цены производителей. {s2.idx?.source && <SrcLink s={s2.idx.source} />} {statusText(s2.idx) && `Индекс ${statusText(s2.idx)}.`} Вкладка «Перерасчёт цен по месяцам».</>,
       what: "Договор, заключённый в начале года, не учитывает последующий рост цен — доводим его цену до последнего месяца, за который Росстат опубликовал данные.", tab: "to_december" },
-    { n: 3, value: s3.idx ? pct(s3.idx.value) : "+0,00 %", caption: s3.branch === "industry" ? `рост отрасли в ${ty}` : s3.branch === "cpi" ? `общая инфляция ${ty}` : "индекса нет",
+    { n: 3, value: s3.idx ? pct(s3.idx.value) : "+0,00 %", caption: s3.level === "wage" ? `рост зарплат в ${ty}` : s3.level === "fx" ? `рост курса в ${ty}` : s3.level === "minstroy" ? `Минстрой, регион, ${ty}` : s3.branch === "industry" ? `рост отрасли в ${ty}` : s3.branch === "cpi" ? `общая инфляция ${ty}` : "индекса нет",
       warn: s3.branch !== "industry",
-      info: <>{s3.branch === "industry" ? `Отрасль: ${industry}.` : `Индекса отрасли нет — взята общая инфляция.`} {s3.idx?.source && <SrcLink s={s3.idx.source} />} {statusText(s3.idx) && `Индекс ${statusText(s3.idx)}.`} Вкладка «{s3.branch === "industry" ? `Рост цен по отраслям ${ty}` : `Общая инфляция ${ty}`}».</>,
-      what: `Умножаем цену на ожидаемый рост цен в отрасли позиции в ${ty} году. Отрасль определяем по коду ОКПД2 из ГПЗ.`, tab: s3.branch === "industry" ? "forecast" : "cpi" },
+      info: <>{s3.level === "wage" ? "Трудоёмкая услуга (охрана, уборка, питание, обучение) — основная часть цены зарплата, поэтому взят прогноз роста зарплат МЭР." : s3.level === "fx" ? "Договор в валюте — цена в рублях следует за курсом, взят прогноз курса МЭР." : s3.level === "minstroy" ? "Строительство — индекс изменения сметной стоимости Минстроя по региону." : s3.branch === "industry" ? `Отрасль: ${industry}.` : `Индекса отрасли нет — взята общая инфляция.`} {s3.idx?.source && <SrcLink s={s3.idx.source} />} {statusText(s3.idx) && `Индекс ${statusText(s3.idx)}.`} Вкладка «{s3.level === "wage" ? `Рост зарплат ${ty}` : s3.level === "fx" ? `Курс валют ${ty}` : s3.level === "minstroy" ? "Стройка по регионам" : s3.branch === "industry" ? `Рост цен по отраслям ${ty}` : `Общая инфляция ${ty}`}».</>,
+      what: `Умножаем цену на ожидаемый рост цен в отрасли позиции в ${ty} году. Отрасль определяем по коду ОКПД2 из ГПЗ.`, tab: s3.level === "wage" || s3.level === "fx" || s3.level === "minstroy" ? s3.level : s3.branch === "industry" ? "forecast" : "cpi" },
     { n: 4, value: rub(ex.forecastPrice), sub: `${rub(ex.withVat)} с НДС ${Math.round(ex.vat * 100)} %`, caption: `без НДС, итого рост ${pct(ex.forecastPrice / ex.price)}`,
       info: <>{ex.vatFile != null ? `В ГПЗ указана ставка ${Math.round(ex.vatFile * 1000) / 10} % — без подтверждения применена ${Math.round(DEFAULT_VAT * 100)} %.` : ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{" "}
         Итого рост = (1 + рост шага 2) × (1 + рост шага 3) − 1: второй рост начисляется на уже выросшую цену.{ex.edited ? " Цена позиции изменена вручную." : ""}</>,

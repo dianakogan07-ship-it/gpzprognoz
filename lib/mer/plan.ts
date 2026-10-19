@@ -3,7 +3,7 @@ import { isActiveIndex, type PriceIndex } from "../types";
 
 /** Значение из прогноза МЭР, готовое к сохранению (один код — одна запись) */
 export interface MerIncoming {
-  kind: "forecast" | "cpi";
+  kind: "forecast" | "cpi" | "wage" | "fx" | "forecast_cons" | "cpi_cons" | "wage_cons" | "fx_cons";
   key: string | null;
   year: number;
   value: number;

@@ -4,7 +4,7 @@ import { REASON_TEXT, STATUS_LABEL, reasonsOf, statusOf } from "./forecastView";
 import type { PriceIndex, Source } from "./types";
 import { VAT_RATES } from "./seed";
 import { normOkpd2, toNumber } from "./normalize";
-import { KIND_LABEL, MONTHS, coefToPercent } from "./indexFormat";
+import { KIND_LABEL, MONTHS, coefToPercent, keyType } from "./indexFormat";
 
 const yesNo = (b: boolean | null) => (b == null ? "не определено" : b ? "да" : "нет");
 
@@ -112,7 +112,9 @@ export function parseIndexFile(buf: ArrayBuffer, sources: Source[] = []): { rows
     const kind = KIND_BY_LABEL[String(r[0] ?? "").trim().toLowerCase()];
     if (!kind) return err(`неизвестный тип индекса «${r[0] ?? ""}»`);
     const rawKey = String(r[1] ?? "").trim();
-    const key = !rawKey ? null : /^[A-Za-z]$/.test(rawKey) ? rawKey.toUpperCase() : normOkpd2(rawKey);
+    const kt = keyType(kind);
+    const key = !rawKey || kt === "none" ? null : kt === "currency" ? (/^[A-Za-z]{3}$/.test(rawKey) ? rawKey.toUpperCase() : null)
+      : kt === "region" ? (/^\d{2,5}$/.test(rawKey) ? rawKey : null) : /^[A-Za-z]$/.test(rawKey) ? rawKey.toUpperCase() : normOkpd2(rawKey);
     const year = toNumber(r[2]);
     const month = parseMonth(r[3]);
     const raw = toNumber(String(r[4] ?? "").replace("−", "-").replace("%", ""));
@@ -121,12 +123,13 @@ export function parseIndexFile(buf: ArrayBuffer, sources: Source[] = []): { rows
     const value = valueIsPercent ? 1 + raw / 100 : raw > 3 ? 1 + raw / 100 : raw;
     if (value <= 0) return err("рост не может быть меньше −100 %");
     if (kind === "to_december" && (!month || month < 1 || month > 12)) return err("для пересчёта до декабря нужен месяц");
-    if (kind !== "cpi" && !key) return err("не указан код ОКПД2/ОКВЭД2");
-    if (rawKey && kind !== "cpi" && !key) return err(`неверный код «${rawKey}»`);
+    const what = kt === "currency" ? "код валюты (USD, EUR, CNY)" : kt === "region" ? "код ОКАТО региона" : "код ОКПД2/ОКВЭД2";
+    if (kt !== "none" && !rawKey) return err(`не указан ${what}`);
+    if (kt !== "none" && !key) return err(`неверный ${what} «${rawKey}»`);
     const source_code = findSource(r[5]);
     if (source_code === undefined) return err(`источник «${r[5]}» не найден в справочнике источников`);
     rows.push({
-      kind, key: kind === "cpi" ? null : key, year, month: kind === "to_december" ? month : null,
+      kind, key, year, month: kind === "to_december" ? month : null,
       value: Math.round(value * 100000) / 100000,
       source_code,
       approved: /^(да|yes|true|1)$/i.test(String(r[6] ?? "").trim()),

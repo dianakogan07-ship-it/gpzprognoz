@@ -27,11 +27,12 @@ export async function unpackArchive(data: Uint8Array): Promise<ArchiveFile[]> {
 }
 
 /**
- * Из архива МЭР берём таблицы, где есть индексы цен: дефляторы/ИЦП и ИПЦ.
- * Консервативный вариант пропускаем — нужен базовый.
+ * Из архива МЭР берём таблицы с индексами цен (дефляторы/ИЦП, ИПЦ) и макропараметрами (зарплата, курс доллара) —
+ * базовый и консервативный варианты отдельно.
  */
-export function pickMerFiles(files: ArchiveFile[]): ArchiveFile[] {
+export function pickMerFiles(files: ArchiveFile[]): { base: ArchiveFile[]; cons: ArchiveFile[] } {
   const tables = files.filter((f) => /\.(xlsx|xls|pdf)$/i.test(f.name));
-  const relevant = tables.filter((f) => /дефлятор|ипц|инфляц|цен/i.test(f.name) && !/консерв/i.test(f.name));
-  return relevant.length ? relevant : tables.filter((f) => !/консерв/i.test(f.name));
+  const relevant = tables.filter((f) => /дефлятор|ипц|инфляц|цен|макро/i.test(f.name));
+  const list = relevant.length ? relevant : tables;
+  return { base: list.filter((f) => !/консерв/i.test(f.name)), cons: list.filter((f) => /консерв/i.test(f.name)) };
 }

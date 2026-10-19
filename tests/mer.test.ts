@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as XLSX from "xlsx";
-import { expandCodes, indicatorOf, parseCodeInput, parseGroup, parseMer, toCoef } from "@/lib/mer/parse";
+import { detectVariant, expandCodes, indicatorOf, parseCodeInput, parseGroup, parseMer, toCoef } from "@/lib/mer/parse";
 import { pdfToPages } from "@/lib/mer/pdf";
 import { xlsxToPages } from "@/lib/mer/xlsx";
 import { pickMerFiles, unpackArchive } from "@/lib/mer/archive";
@@ -143,12 +143,29 @@ describe("прогноз МЭР: варианты строками, ИПЦ пр�
 describe("архив таблиц МЭР (прогноз 2027–2029)", async () => {
   const files = await unpackArchive(new Uint8Array(readFileSync(path.join(__dirname, "fixtures/mer-attachments-2026.7z"))));
   const picked = pickMerFiles(files);
-  const pages = picked.flatMap((f) => xlsxToPages(f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength) as ArrayBuffer));
+  const pages = picked.base.flatMap((f) => xlsxToPages(f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength) as ArrayBuffer));
   const res = parseMer(pages, 2027);
   const r = byCode(res);
-  it("берёт из архива только дефляторы и ИПЦ базового варианта", () => {
+  it("берёт из архива дефляторы, ИПЦ и макропараметры — базовый и консервативный варианты отдельно", () => {
     expect(files).toHaveLength(10);
-    expect(picked.map((f) => f.name)).toEqual(["4. ИПЦ_базовый.xlsx", "6. Дефляторы_базовый.xlsx"]);
+    expect(picked.base.map((f) => f.name).sort()).toEqual(["2. Макро_базовый.xlsx", "4. ИПЦ_базовый.xlsx", "6. Дефляторы_базовый.xlsx"]);
+    expect(picked.cons.map((f) => f.name).sort()).toEqual(["3. Макро_консервативный.xlsx", "5. ИПЦ_консервативный.xlsx", "7. Дефляторы_консервативный.xlsx"]);
+  });
+  it("зарплата и курс доллара: рост 2027 к 2026", () => {
+    // В Excel значения с округлением до сотых — рост сходится с точными данными до 0,05 п.п.
+    const w = res.rows.find((x) => x.kind === "wage")!, fx = res.rows.find((x) => x.kind === "fx")!;
+    expect(w.problems).toEqual([]); expect(w.value!).toBeCloseTo(119969.43 / 112279.42, 3);
+    expect(fx).toMatchObject({ keys: ["USD"], problems: [] }); expect(Math.abs(fx.value! - 87.4285 / 79.5427)).toBeLessThan(0.0005);
+  });
+  it("консервативный вариант: свой ИПЦ, зарплата, курс и отраслевые индексы", () => {
+    const cp = picked.cons.flatMap((f) => xlsxToPages(f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength) as ArrayBuffer));
+    expect(detectVariant(cp)).toBe("cons");
+    const c = parseMer(cp, 2027, "cons");
+    expect(c.rows.every((x) => x.variant === "cons")).toBe(true);
+    expect(c.rows.find((x) => x.kind === "cpi")).toMatchObject({ value: 1.056 });
+    expect(c.rows.find((x) => x.kind === "wage")!.value!).toBeCloseTo(119619.16 / 112279.42, 3);
+    expect(Math.abs(c.rows.find((x) => x.kind === "fx")!.value! - 89.0319 / 79.5427)).toBeLessThan(0.0005);
+    expect(byCode(c)["Раздел C"]).toMatchObject({ indicator: "icp", value: 1.051 });
   });
   it("отраслевые индексы: ИЦП основным, дефлятор справочно; коды через запятую и с точкой", () => {
     expect(r["Раздел C"]).toMatchObject({ indicator: "icp", value: 1.047, deflator: 1.049, problems: [] });

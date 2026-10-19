@@ -96,7 +96,7 @@ export function toViewRows(rows: ForecastRow[], metas?: RowMeta[]): ViewRow[] {
 
 /* ---------- Фильтры ---------- */
 
-export type SourceKind = "okpd2" | "okved2" | "cpi";
+export type SourceKind = "okpd2" | "okved2" | "cpi" | "wage" | "fx" | "minstroy";
 export type ContractsBucket = "1" | "2-4" | "5+";
 export type Repeat = "yes" | "no" | "unknown";
 export type Flag = "review" | "edited";
@@ -129,7 +129,7 @@ export const EMPTY_FILTERS: Filters = {
   growthMin: null, growthMax: null, repeat: [], method: [], flags: [], sort: null, dir: "asc", exFile: [], exReason: [],
 };
 
-export const SOURCE_LABEL: Record<SourceKind, string> = { okpd2: "Отраслевой ОКПД2", okved2: "Отраслевой ОКВЭД2", cpi: "Общая инфляция" };
+export const SOURCE_LABEL: Record<SourceKind, string> = { okpd2: "Отраслевой ОКПД2", okved2: "Отраслевой ОКВЭД2", cpi: "Общая инфляция", wage: "Рост зарплат", fx: "Курс валюты", minstroy: "Минстрой по региону" };
 export const CONTRACTS_LABEL: Record<ContractsBucket, string> = { "1": "1", "2-4": "2–4", "5+": "5 и более" };
 export const REPEAT_LABEL: Record<Repeat, string> = { yes: "Повторяющиеся", no: "Разовые", unknown: "Не определена" };
 
@@ -219,7 +219,7 @@ export function filtersFromQuery(qs: string | URLSearchParams): Filters {
     category: list("cat"),
     region: list("reg"),
     okpd: p.get("okpd") ?? "",
-    source: list<SourceKind>("src", ["okpd2", "okved2", "cpi"]),
+    source: list<SourceKind>("src", ["okpd2", "okved2", "cpi", "wage", "fx", "minstroy"]),
     contracts: list<ContractsBucket>("n", ["1", "2-4", "5+"]),
     growthMin: num("gmin"),
     growthMax: num("gmax"),

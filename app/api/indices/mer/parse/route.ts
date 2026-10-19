@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { json } from "@/lib/api";
-import { parseMer } from "@/lib/mer/parse";
+import { detectVariant, parseMer } from "@/lib/mer/parse";
 import { xlsxToPages } from "@/lib/mer/xlsx";
 import { pdfToPages } from "@/lib/mer/pdf";
 import type { Page } from "@/lib/mer/grid";
@@ -30,10 +30,12 @@ export async function POST(req: NextRequest) {
   try {
     const year = Number(req.nextUrl.searchParams.get("year"));
     if (!year) return json({ error: "Не указан год прогноза" }, 400);
-    let pages: Page[];
+    // Страницы базового и консервативного вариантов разбираются отдельно и объединяются
+    let base: Page[] = [], cons: Page[] = [];
     let archiveName = "";
     if (req.headers.get("content-type")?.includes("application/json")) {
-      pages = ((await req.json()) as { pages: Page[] }).pages;
+      const pages = ((await req.json()) as { pages: Page[] }).pages;
+      if (detectVariant(pages) === "cons") cons = pages; else base = pages;
     } else {
       const form = await req.formData();
       const file = form.get("file");
@@ -42,16 +44,26 @@ export async function POST(req: NextRequest) {
       const data = new Uint8Array(await file.arrayBuffer());
       if (/\.(7z|zip|rar)$/i.test(name) || isArchive(data)) {
         archiveName = (file as File).name ?? "";
-        const files = pickMerFiles(await unpackArchive(data));
-        if (!files.length) return json({ error: "В архиве нет таблиц Excel или PDF" }, 400);
-        pages = [];
-        for (const f of files) {
-          const short = f.name.split("/").pop()!;
-          for (const p of await toPages(f.name, f.data)) pages.push({ ...p, label: `${short}, ${p.label}` });
+        const picked = pickMerFiles(await unpackArchive(data));
+        if (!picked.base.length && !picked.cons.length) return json({ error: "В архиве нет таблиц Excel или PDF" }, 400);
+        for (const [list, out] of [[picked.base, base], [picked.cons, cons]] as const) {
+          for (const f of list) {
+            const short = f.name.split("/").pop()!;
+            for (const p of await toPages(f.name, f.data)) out.push({ ...p, label: `${short}, ${p.label}` });
+          }
         }
-      } else pages = await toPages(name, data);
+      } else {
+        const pages = await toPages(name, data);
+        if (detectVariant(pages, name) === "cons") cons = pages; else base = pages;
+      }
     }
-    const res = parseMer(pages, year);
+    const b = base.length ? parseMer(base, year, "base") : null;
+    const c = cons.length ? parseMer(cons, year, "cons") : null;
+    const res = b ?? c!;
+    if (b && c) {
+      res.rows = [...b.rows, ...c.rows.map((r) => ({ ...r, id: `c${r.id}` }))];
+      res.warnings = [...b.warnings, ...c.warnings.map((w) => `Консервативный вариант: ${w}`)];
+    }
     // В архиве таблиц МЭР нет титульного листа — название берём из имени файла, его можно поправить в предпросмотре
     if (!res.title) res.title = `Прогноз социально-экономического развития, Минэкономразвития (${archiveName || "таблицы"})`;
     return json(res);

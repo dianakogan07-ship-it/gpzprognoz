@@ -1,9 +1,14 @@
 import { cleanText, type Cell, type Page, type Row } from "./grid";
 
 /** Строка предпросмотра: один вид деятельности (или ИПЦ) */
+export type MerVariant = "base" | "cons";
+
 export interface MerRow {
   id: string;
-  kind: "forecast" | "cpi";
+  /** forecast — отрасль, cpi — инфляция, wage — зарплата, fx — курс доллара */
+  kind: "forecast" | "cpi" | "wage" | "fx";
+  /** Вариант прогноза: базовый или консервативный */
+  variant: MerVariant;
   /** Коды для индекса: «05», «06», «B». Несколько — если в документе «06+09» или «10-12» */
   keys: string[];
   /** Код как в документе: «Раздел B», «05», «06+09» */
@@ -84,7 +89,8 @@ const YEAR = (y: number) => new RegExp(`^${y}(\\s*(г\\.?|год\\S*))?$`, "i");
 interface Columns { x: number; tolerance: number; firstX: number }
 
 /** Колонка целевого года в заголовке страницы (базовый вариант, если вариантов несколько) */
-function findColumn(rows: Row[], from: number, to: number, year: number, tolDefault: number): Columns | null {
+function findColumn(rows: Row[], from: number, to: number, year: number, tolDefault: number, variant: MerVariant = "base"): Columns | null {
+  const VAR = variant === "cons" ? /консерв/i : /базов/i;
   let tol = tolDefault;
   const years: Cell[] = [], bases: Cell[] = [];
   let firstX = Infinity;
@@ -92,7 +98,7 @@ function findColumn(rows: Row[], from: number, to: number, year: number, tolDefa
     for (const c of rows[i].cells) {
       if (YEAR(year).test(c.text)) years.push(c);
       if (/^20\d\d/.test(c.text)) firstX = Math.min(firstX, c.x);
-      if (/базов/i.test(c.text)) bases.push(c);
+      if (VAR.test(c.text)) bases.push(c);
     }
   }
   if (!years.length) return null;
@@ -138,7 +144,15 @@ export function toCoef(text: string): { value: number | null; problem?: string }
 const VARIANT = /^(базов\S*|консерв\S*|целев\S*)(\s+вариант)?$/i;
 
 /** Разбор документа МЭР: таблица ИЦП и дефляторов по видам деятельности + ИПЦ */
-export function parseMer(pages: Page[], targetYear: number): MerParseResult {
+/** Вариант прогноза по тексту файла: «Консервативный вариант» без «базовый» — консервативный */
+export function detectVariant(pages: Page[], name = ""): MerVariant {
+  const text = `${name} ${pages.map((p) => `${p.label} ${p.rows.slice(0, 12).map(rowText).join(" ")}`).join(" ")}`;
+  return /консерв/i.test(text) && !/базов/i.test(text) ? "cons" : "base";
+}
+
+export function parseMer(pages: Page[], targetYear: number, variant: MerVariant = "base"): MerParseResult {
+  const VAR = variant === "cons" ? /консерв/i : /базов/i;
+  const varName = variant === "cons" ? "консервативный" : "базовый";
   const warnings: string[] = [];
   const all = pages.flatMap((p, pi) => p.rows.map((r, ri) => ({ r, pi, ri })));
   const docText = all.slice(0, 400).map((x) => rowText(x.r)).join("\n");
@@ -159,8 +173,8 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
   if (start < 0) warnings.push("В этом файле нет таблицы индексов цен производителей и индексов-дефляторов по видам деятельности — отраслевые индексы не загрузятся. МЭР публикует её в архиве с таблицами к прогнозу (Attachments, .7z) — загрузите этот архив.");
   else {
     tablePage = pages[all[start].pi].label;
-    if (!/базов/i.test(all.slice(start, start + 15).map((x) => rowText(x.r)).join(" ")) && !/базов/i.test(rowText(all[start].r))) {
-      warnings.push("В заголовке таблицы не указан вариант прогноза — проверьте, что это базовый вариант");
+    if (!VAR.test(all.slice(start, start + 15).map((x) => rowText(x.r)).join(" ")) && !VAR.test(rowText(all[start].r)) && !VAR.test(pages[all[start].pi].label)) {
+      warnings.push(`В заголовке таблицы не указан вариант прогноза — проверьте, что это ${varName} вариант`);
     }
     type Raw = { keys: string[]; codeText: string; indicator: "icp" | "deflator" | null; value: string | null; raw: string; page: string; groupLabel: string };
     const found: Raw[] = [];
@@ -176,7 +190,7 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
       // Заголовок с годами — в первых строках таблицы на каждой странице
       let headerEnd = from;
       while (headerEnd < rs.length && !rs[headerEnd].cells.some((c) => YEAR(targetYear).test(c.text)) && headerEnd - from < 25) headerEnd++;
-      const col = findColumn(rs, from, Math.min(rs.length, headerEnd + 4), targetYear, page.tolerance ?? 14);
+      const col = findColumn(rs, from, Math.min(rs.length, headerEnd + 4), targetYear, page.tolerance ?? 14, variant);
       if (!col) {
         if (seenData) break;
         if (pi === all[start].pi) warnings.push(`В таблице нет колонки ${targetYear} года`);
@@ -239,7 +253,7 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
       if (v.problem) problems.push(v.problem);
       const d = icp && defl?.value ? toCoef(defl.value).value : null;
       rows.push({
-        id: `f${n++}`, kind: "forecast", keys: main.keys, codeText: main.codeText, indicator: main.indicator,
+        id: `f${n++}`, kind: "forecast", variant, keys: main.keys, codeText: main.codeText, indicator: main.indicator,
         value: v.value, deflator: d, raw: items.map((x) => x.raw).join("\n"), page: main.page, problems,
       });
     }
@@ -260,16 +274,20 @@ export function parseMer(pages: Page[], targetYear: number): MerParseResult {
   }
 
   // ---- ИПЦ ----
-  const cpi = findCpi(pages, targetYear);
+  const cpi = findCpi(pages, targetYear, variant);
   if (cpi) rows.push(cpi);
   else warnings.push(`Не найден индекс потребительских цен на ${targetYear} год`);
+
+  // ---- Зарплата и курс доллара: рост к прошлому году ----
+  rows.push(...findMacro(pages, targetYear, variant));
 
   const published = head.match(/(январ|феврал|март|апрел|ма[йя]|июн|июл|август|сентябр|октябр|ноябр|декабр)\S*\s+20\d\d/i);
   return { title, approvedDate: date ? date[1] : published ? published[0].toLowerCase() : null, targetYear, tablePage, rows, warnings };
 }
 
 /** ИПЦ: предпочтительно «в среднем за год», иначе «на конец года» */
-function findCpi(pages: Page[], year: number): MerRow | null {
+function findCpi(pages: Page[], year: number, variant: MerVariant): MerRow | null {
+  const varName = variant === "cons" ? "консервативный" : "базовый";
   const cands: { avg: boolean; row: MerRow }[] = [];
   for (const page of pages) {
     const rs = page.rows;
@@ -280,18 +298,18 @@ function findCpi(pages: Page[], year: number): MerRow | null {
       let h = i;
       while (h >= 0 && !rs[h].cells.some((c) => YEAR(year).test(c.text))) h--;
       if (h < 0) continue;
-      const col = findColumn(rs, Math.max(0, h - 3), h + 3, year, page.tolerance ?? 14);
+      const col = findColumn(rs, Math.max(0, h - 3), h + 3, year, page.tolerance ?? 14, variant);
       if (!col) continue;
       let label = labelOf(rs[i], col);
       if (!hasNumbers(rs[i], col)) { if (label) heading = label; continue; }
       if (VARIANT.test(label)) {
-        if (!/^базов/i.test(label)) continue;
-        label = `${heading} (базовый)`;
+        if (!(variant === "cons" ? /^консерв/i : /^базов/i).test(label)) continue;
+        label = `${heading} (${varName})`;
       }
       if (!label) continue; // значения прошлых лет без подписи
       if (/(ипц|цен\S*)\s+на\s+(товары|услуги)/i.test(label)) continue;
       const isCpi = /потребительск\S*\s+цен|(^|[^а-яё])ипц($|[^а-яё])/i.test(label) || (/потребительск\S*\s+цен|(^|[^а-яё])ипц($|[^а-яё])/i.test(heading) && /(в среднем|на конец|декабр)/i.test(label));
-      if (!isCpi) { if (!/\(базовый\)$/.test(label)) heading = ""; continue; }
+      if (!isCpi) { if (!/\((базовый|консервативный)\)$/.test(label)) heading = ""; continue; }
       const v = valueAt(rs[i], col);
       if (!v) continue;
       const c = toCoef(v);
@@ -299,12 +317,57 @@ function findCpi(pages: Page[], year: number): MerRow | null {
       const problems = c.problem ? [c.problem] : [];
       if (!avg && !/на конец|декабр/i.test(label)) problems.push("не указано, среднегодовой это ИПЦ или на конец года");
       cands.push({ avg, row: {
-        id: `cpi${cands.length}`, kind: "cpi", keys: [], codeText: "", indicator: null, value: c.value, deflator: null,
+        id: `cpi${cands.length}`, kind: "cpi", variant, keys: [], codeText: "", indicator: null, value: c.value, deflator: null,
         raw: cleanText(`${heading && !label.startsWith(heading) && !/потребительск/i.test(label) ? `${heading} → ` : ""}${label.startsWith(heading) && heading ? `${heading} → ` : ""}${text}`), page: page.label, problems,
       } });
     }
   }
   return (cands.find((c) => c.avg && !c.row.problems.length) ?? cands.find((c) => !c.row.problems.length) ?? cands[0])?.row ?? null;
+}
+
+const MACRO: { kind: "wage" | "fx"; re: RegExp; keys: string[] }[] = [
+  { kind: "wage", re: /среднемесячн\S*\s+(номинальн\S*\s+)?начисленн\S*\s+заработн/i, keys: [] },
+  { kind: "fx", re: /курс\S*\s+доллар/i, keys: ["USD"] },
+];
+
+/** Число любой величины в колонке: зарплата в рублях — «112 279,42» */
+function bigAt(r: Row, col: Columns): number | null {
+  let best: { x: number; v: number } | null = null;
+  for (const c of r.cells) {
+    const t = c.text.replace(/[\s\u00a0]/g, "");
+    if (!/^\d+(?:[.,]\d+)?$/.test(t) || Math.abs(c.x - col.x) > col.tolerance) continue;
+    if (!best || Math.abs(c.x - col.x) < Math.abs(best.x - col.x)) best = { x: c.x, v: Number(t.replace(",", ".")) };
+  }
+  return best?.v ?? null;
+}
+
+/** Зарплата (руб./мес.) и курс доллара (руб.): рост = значение года прогноза / значение прошлого года */
+function findMacro(pages: Page[], year: number, variant: MerVariant): MerRow[] {
+  const out: MerRow[] = [];
+  for (const m of MACRO) {
+    for (const page of pages) {
+      const rs = page.rows;
+      const i = rs.findIndex((r) => m.re.test(rowText(r)));
+      if (i < 0) continue;
+      let h = i;
+      while (h >= 0 && !rs[h].cells.some((c) => YEAR(year).test(c.text))) h--;
+      if (h < 0) continue;
+      const cur = findColumn(rs, Math.max(0, h - 3), h + 3, year, page.tolerance ?? 14, variant);
+      const prev = findColumn(rs, Math.max(0, h - 3), h + 3, year - 1, page.tolerance ?? 14, variant);
+      if (!cur || !prev) continue;
+      const a = bigAt(rs[i], cur), b = bigAt(rs[i], prev);
+      const problems: string[] = [];
+      let value: number | null = null;
+      if (a != null && b != null && b > 0) value = Math.round((a / b) * 100000) / 100000;
+      else problems.push(`нет значений за ${year - 1} и ${year} годы`);
+      out.push({
+        id: `${m.kind}${out.length}`, kind: m.kind, variant, keys: m.keys, codeText: m.keys.join(""), indicator: null, value, deflator: null,
+        raw: cleanText(`${m.kind === "wage" ? "Среднемесячная начисленная заработная плата" : "Курс доллара США"}: ${year} — ${a ?? "нет"}, ${year - 1} — ${b ?? "нет"}`), page: page.label, problems,
+      });
+      break;
+    }
+  }
+  return out;
 }
 
 /** Коды из поля ввода: «06+09», «10-12», «B», «43.2» */

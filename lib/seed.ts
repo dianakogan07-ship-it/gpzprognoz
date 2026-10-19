@@ -197,6 +197,8 @@ export const SEED: Reference = {
     { id: 4, code: "MER_FORECAST", name: "Минэкономразвития — прогноз социально-экономического развития (индексы-дефляторы)", url: "https://www.economy.gov.ru/material/directions/makroec/prognozy_socialno_ekonomicheskogo_razvitiya/", kind: "forecast", verified: true, note: "Прогнозные дефляторы по видам деятельности" },
     { id: 5, code: "CBR", name: "Банк России — макроэкономический опрос и прогноз инфляции", url: "https://www.cbr.ru/statistics/ddkp/mo_br/", kind: "cpi", verified: true, note: null },
     { id: 6, code: "MINSTROY", name: "Минстрой России — индексы изменения сметной стоимости", url: "https://minstroyrf.gov.ru", kind: "forecast", verified: true, note: "Для капстроительства и ПИР" },
+    { id: 8, code: "MER_MACRO", name: "Минэкономразвития — прогноз социально-экономического развития: зарплата и курс доллара (основные макропараметры)", url: "https://www.economy.gov.ru/material/directions/makroec/prognozy_socialno_ekonomicheskogo_razvitiya/", kind: "wage", verified: true, note: "Среднемесячная начисленная зарплата и курс доллара, базовый и консервативный варианты" },
+    { id: 9, code: "FGIS_CS", name: "ФГИС ЦС Минстроя России — индексы изменения сметной стоимости строительства по субъектам РФ", url: "https://fgiscs.minstroyrf.ru", kind: "minstroy", verified: true, note: "Ежеквартальные индексы по регионам, письма Минстроя" },
     { id: 7, code: "NK_RF", name: "Налоговый кодекс РФ, ст. 164 (ставки НДС)", url: "https://www.consultant.ru/document/cons_doc_LAW_28165/", kind: "vat", verified: true, note: null },
   ],
   categories: CATEGORY_SHORT.map(([name, short_name], i) => ({ id: i + 1, name, short_name })),

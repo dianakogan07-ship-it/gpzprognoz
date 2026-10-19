@@ -1,5 +1,5 @@
 import type { ForecastRow } from "../forecast";
-import type { PriceIndex, Reference } from "../types";
+import { TARGET_KINDS, type PriceIndex, type Reference } from "../types";
 
 export type ForecastStatus = "draft" | "review" | "approved" | "rejected" | "archived";
 export const STATUS_TITLE: Record<ForecastStatus, string> = { draft: "В работе", review: "На проверке", approved: "Утверждён", rejected: "Отклонён", archived: "В архиве" };
@@ -51,11 +51,11 @@ export interface SnapshotIndex {
   loadedAt: string | null;
 }
 
-/** Снимок индексов, по которым считается прогноз: отраслевые и ИПЦ на год прогноза, пересчёт внутри базового года */
+/** Снимок индексов, по которым считается прогноз: все индексы на год прогноза (оба сценария), пересчёт внутри базового года */
 export function indexSnapshot(ref: Reference, year: number, baseYear: number): SnapshotIndex[] {
   return ref.indices
     .filter((i) => !i.pending_of && !i.superseded_at)
-    .filter((i) => ((i.kind === "forecast" || i.kind === "cpi") && i.year === year) || (i.kind === "to_december" && i.year === baseYear))
+    .filter((i) => (TARGET_KINDS.includes(i.kind) && i.year === year) || (i.kind === "to_december" && i.year === baseYear))
     .map((i) => {
       const s = ref.sources.find((x) => x.code === i.source_code);
       return {

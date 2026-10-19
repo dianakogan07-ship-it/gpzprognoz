@@ -13,7 +13,7 @@ const gpz = (p: Partial<GpzRow>): GpzRow => ({
 });
 const rep = (p: Partial<ReportRow>): ReportRow => ({
   row: 1, lot: "L1", procId: null, status: null, priceNoVat: 1000, quantity: 1, contractDate: new Date(Date.UTC(2026, 0, 15)), ws: null, vatRate: null,
-  endDate: null, offerNoVat: null, comment: null, ...p,
+  endDate: null, offerNoVat: null, comment: null, currency: null, ...p,
 });
 const ref = (indices: PriceIndex[]) => ({ ...SEED, indices });
 const idx = [
@@ -95,5 +95,42 @@ describe("замечания от 13.10.2026", () => {
     expect(food.activeTarget).toBe(1);
     // Середина срока — май 2027: пересчёт внутри 2026 года не нужен
     expect(food.toDecember).toBe("not_needed");
+  });
+});
+
+describe("отдельные индексы: зарплаты, курс, Минстрой, консервативный сценарий", () => {
+  const all = [
+    ...idx,
+    ix({ id: 30, key: "C", kind: "forecast_cons", value: 1.051 }),
+    ix({ id: 31, key: null, kind: "cpi", value: 1.04 }), ix({ id: 32, key: null, kind: "cpi_cons", value: 1.056 }),
+    ix({ id: 33, key: null, kind: "wage", value: 1.0685 }), ix({ id: 34, key: null, kind: "wage_cons", value: 1.0654 }),
+    ix({ id: 35, key: "USD", kind: "fx", value: 1.099 }), ix({ id: 36, key: "USD", kind: "fx_cons", value: 1.119 }),
+    ix({ id: 37, key: "71100", kind: "minstroy", value: 1.08 }),
+    ix({ id: 38, key: "F", value: 1.054 }),
+  ];
+  const run = (g: Partial<GpzRow>, r: Partial<ReportRow> = {}) =>
+    buildForecast([gpz({ contractDate: undefined, ...g } as Partial<GpzRow>)], [rep({ contractDate: new Date(Date.UTC(2026, 11, 10)), ...r })], ref(all), { baseYear: 2026, targetYear: 2027 }).rows[0];
+
+  it("уборка, охрана, питание, обучение — по росту зарплат, консервативный — свой", () => {
+    for (const code of ["81.22.11.000", "80.10.12.000", "56.29.20.000", "85.30.19.000"]) {
+      const r = run({ okpd2: code });
+      expect(r.indexLevel).toBe("wage");
+      expect(r.forecastIndex).toBe(1.0685);
+      expect(r.forecastIndexCons).toBe(1.0654);
+    }
+  });
+  it("договор в долларах — по курсу; в евро без своего прогноза — по доллару", () => {
+    expect(run({}, { currency: "Доллар США" })).toMatchObject({ indexLevel: "fx", forecastIndex: 1.099, forecastIndexCons: 1.119, currency: "USD" });
+    expect(run({}, { currency: "Евро" })).toMatchObject({ indexLevel: "fx", forecastIndex: 1.099, currency: "EUR" });
+    expect(run({}, { currency: "-" }).indexLevel).toBe("okpd2");
+  });
+  it("стройка — индекс Минстроя своего региона; в регионе без индекса — общий «Строительство»", () => {
+    expect(run({ okpd2: "42.21.13.000", region: "71100" })).toMatchObject({ indexLevel: "minstroy", forecastIndex: 1.08, forecastIndexCons: 1.08 });
+    expect(run({ okpd2: "42.21.13.000", region: "69" })).toMatchObject({ indexLevel: "okved2", forecastIndex: 1.054 });
+  });
+  it("консервативный отраслевой индекс — по тому же коду; нет консервативного — равен базовому", () => {
+    const r = run({ okpd2: "28.13.14.110" });
+    expect(r).toMatchObject({ indexLevel: "okved2", indexKey: "C", forecastIndex: 1.047, forecastIndexCons: 1.051 });
+    expect(run({}).forecastIndexCons).toBe(1.059);
   });
 });
