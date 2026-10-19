@@ -128,7 +128,6 @@ export default function LogicPage() {
         Итого рост = (1 + рост шага 2) × (1 + рост шага 3) − 1: второй рост начисляется на уже выросшую цену.{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
       what: "Получаем прогноз сразу в двух видах: без НДС и с НДС по ставке из строки ГПЗ.", tab: null },
   ];
-  const cur = steps.find((s) => s.n === active);
 
   return (
     <div className="space-y-5">
@@ -139,37 +138,45 @@ export default function LogicPage() {
 
       <div className="card space-y-5">
         {itemError && <p className="text-sm text-red-600">Не удалось открыть позицию: {itemError}. Показан общий пример.</p>}
-        <ol className="flex flex-col md:flex-row md:items-start">
-          {steps.map((s, i) => (
-            <li key={s.n} id={`step-${s.n}`} className="flex flex-col md:flex-1 md:flex-row md:items-start">
-              <div className="flex items-center gap-4 md:w-full md:flex-col md:gap-2 md:text-center">
+        <ol className="hidden md:grid md:grid-cols-4">
+          {steps.map((s, i) => {
+            const c = STEP_COLORS[i];
+            return (
+              <li key={s.n} id={`step-${s.n}`} className="flex flex-col items-center">
                 <button type="button" onClick={() => toggle(s.n)} aria-expanded={active === s.n} aria-label={`Шаг ${s.n}`}
-                  className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-4 text-lg font-semibold transition md:h-16 md:w-16 ${active === s.n
-                    ? "border-brand bg-brand text-white shadow-lg shadow-brand/20" : "border-brand/30 bg-white text-brand hover:border-brand"}`}>
-                  {String(s.n).padStart(2, "0")}
+                  className={`relative mb-3 flex h-20 w-20 items-center justify-center transition hover:-translate-y-0.5 ${active === s.n ? "scale-105" : ""}`}>
+                  <span aria-hidden className="absolute inset-0 rotate-45 rounded-[50%_50%_0_50%] shadow-md" style={{ background: c }} />
+                  <span className="relative flex h-14 w-14 items-center justify-center rounded-full bg-white text-2xl font-light shadow-inner" style={{ color: c }}>
+                    {String(s.n).padStart(2, "0")}
+                  </span>
                 </button>
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1 md:justify-center">
-                    <button type="button" onClick={() => toggle(s.n)} className={`whitespace-nowrap text-xl font-semibold ${s.warn ? "text-amber-700" : "text-slate-900"}`}>{s.value}</button>
-                    <Info>{s.info}</Info>
-                  </div>
-                  <p className="text-sm text-slate-500">{s.caption}</p>
-                  {s.sub && <p className="mt-1 text-base font-semibold text-slate-700">{s.sub}</p>}
-                  {s.warn && <p className="text-xs font-medium text-amber-700">согласовать</p>}
-                </div>
-              </div>
-              {i < steps.length - 1 && <span aria-hidden className="ml-7 h-5 border-l-2 border-dashed border-brand/40 md:ml-0 md:mt-8 md:h-0 md:w-8 md:shrink-0 md:border-l-0 md:border-t-2 lg:w-12" />}
-            </li>
-          ))}
+                <span aria-hidden className="h-6 border-l-2" style={{ borderColor: c }} />
+                <span aria-hidden className="mb-[-6px] h-3 w-3 rounded-full border-2 bg-white" style={{ borderColor: c }} />
+              </li>
+            );
+          })}
         </ol>
-
-        {cur && (
-          <div className="rounded-xl border border-brand/30 bg-brand-light/40 p-4 text-sm text-slate-700">
-            <p>{cur.what}</p>
-            {cur.n === 3 && <p className="mt-2">Нет индекса отрасли → общая инфляция, пометка «Согласовать».</p>}
-            {cur.tab && <Link href={`/indices?tab=${cur.tab}`} className="mt-2 inline-block font-medium text-brand hover:underline">Смотреть индексы →</Link>}
-          </div>
-        )}
+        <div className="grid gap-5 md:-mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm md:grid-cols-4 md:gap-4">
+          {steps.map((s, i) => {
+            const c = STEP_COLORS[i];
+            return (
+              <div key={s.n} className="min-w-0 md:border-l md:border-slate-200 md:pl-4 md:first:border-l-0 md:first:pl-0">
+                <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide" style={{ color: c }}>
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full text-sm font-semibold text-white md:hidden" style={{ background: c }}>{s.n}</span>{STEP_TITLES[i]}</p>
+                <div className="mt-2 flex items-center gap-1">
+                  <span className={`whitespace-nowrap text-xl font-semibold ${s.warn ? "text-amber-700" : "text-slate-900"}`}>{s.value}</span>
+                  <Info>{s.info}</Info>
+                </div>
+                <p className="text-sm text-slate-500">{s.caption}</p>
+                {s.sub && <p className="mt-1 text-sm font-semibold text-slate-700">{s.sub}</p>}
+                {s.warn && <p className="text-xs font-medium text-amber-700">согласовать</p>}
+                <p className="mt-2 text-xs leading-relaxed text-slate-600">{s.what}</p>
+                {s.n === 3 && <p className="mt-1 text-xs text-slate-600">Нет индекса отрасли → общая инфляция, пометка «Согласовать».</p>}
+                {s.tab && <Link href={`/indices?tab=${s.tab}`} className="mt-2 inline-block text-xs font-medium hover:underline" style={{ color: c }}>Смотреть индексы →</Link>}
+              </div>
+            );
+          })}
+        </div>
 
         <p className="text-sm text-slate-600">
           {ex.row
@@ -180,6 +187,9 @@ export default function LogicPage() {
     </div>
   );
 }
+
+const STEP_COLORS = ["#c8433a", "#e57a2c", "#d9a400", "#4a7fa0"];
+const STEP_TITLES = ["Цена договора", "Рост внутри года", "Рост в прогнозном году", "Прогноз"];
 
 const MONTHS_GEN_FROM = (m: number | null) => (m ? ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1] : "начала года");
 const MONTHS_GEN_OF = (m: number) => ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1];
