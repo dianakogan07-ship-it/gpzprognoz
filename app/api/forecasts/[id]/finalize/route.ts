@@ -8,7 +8,7 @@ export const fetchCache = "force-no-store";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   return handle(async () => {
-    const b = (await req.json()) as { versionId: number; gpzRows: number; excluded: number; excludedRows?: ExcludedRow[] };
-    return finalizeUpload(Number(params.id), b.versionId, { gpzRows: b.gpzRows, excluded: b.excluded, excludedRows: b.excludedRows, author: currentAuthor() });
+    const b = (await req.json()) as { versionId: number; gpzRows: number; excluded: number; excludedRows?: ExcludedRow[]; hash?: string };
+    return finalizeUpload(Number(params.id), b.versionId, { gpzRows: b.gpzRows, excluded: b.excluded, excludedRows: b.excludedRows, hash: b.hash, author: currentAuthor() });
   }, true);
 }

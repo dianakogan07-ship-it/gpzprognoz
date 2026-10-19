@@ -4,7 +4,8 @@ import { Modal } from "./Modal";
 import { api } from "./useReference";
 import { FilePick } from "./FilePick";
 import { CARD_COLORS, PICK_STATUSES, STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
-import { calcFromFiles, saveRows } from "@/lib/forecasts/client";
+import { calcFromFiles, saveRows, uploadIssues, type UploadIssues } from "@/lib/forecasts/client";
+import { UploadReview } from "./UploadReview";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import type { Reference } from "@/lib/types";
 
@@ -37,6 +38,8 @@ export function EditCard({ c, reference, focusFiles, onClose, onSaved }: {
   const [rep, setRep] = useState<File | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<UploadIssues | null>(null);
+  const [trustVat, setTrustVat] = useState(false);
 
   async function save() {
     if (!title.trim()) return setError("Укажите название");
@@ -53,7 +56,11 @@ export function EditCard({ c, reference, focusFiles, onClose, onSaved }: {
       }
       if (gpz && rep) {
         setBusy("Чтение файлов…");
-        const calc = await calcFromFiles(gpz, rep, reference, y, b);
+        let calc = await calcFromFiles(gpz, rep, reference, y, b);
+        if (!issues) {
+          const found = await uploadIssues(calc);
+          if (found.any) { setIssues(found); setBusy(null); return; }
+        } else if (trustVat) calc = await calcFromFiles(gpz, rep, reference, y, b, { trustVat: true });
         const v = await api(`/api/forecasts/${c.id}/data`, "POST", { year: y, baseYear: b });
         await saveRows(c.id, v.versionId, calc, setBusy);
         msg = `Загружены новые файлы: создана версия ${v.number}, в расчёте ${calc.result.rows.length} строк. Прежняя версия осталась в истории.`;
@@ -75,7 +82,7 @@ export function EditCard({ c, reference, focusFiles, onClose, onSaved }: {
   );
   return (
     <Modal title="Редактировать прогноз" subtitle={`Прогноз на ${c.year} · база ${c.base_year}`} onClose={onClose}
-      footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={!!busy} onClick={save}>{busy ?? "Сохранить"}</button></>}>
+      footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={!!busy} onClick={save}>{busy ?? (issues?.dupes.length ? "Создать новую версию" : issues ? "Подтвердить и сохранить" : "Сохранить")}</button></>}>
       <div><label className="field-label" htmlFor="ct">Название</label>
         <input id="ct" autoFocus={!focusFiles} className="inp py-2" value={title} onChange={(e) => setTitle(e.target.value)} /></div>
       <div><label className="field-label" htmlFor="cs">Статус</label>
@@ -103,8 +110,9 @@ export function EditCard({ c, reference, focusFiles, onClose, onSaved }: {
           <div><label className="field-label" htmlFor="cb">Год базы (отчётность)</label>
             <input id="cb" inputMode="numeric" className="inp py-2" value={baseYear} onChange={(e) => setBaseYear(e.target.value)} /></div>
         </div>
-        <FilePick label="Загрузить ГПЗ заново" file={gpz} onChange={setGpz} />
-        <FilePick label="Загрузить отчётность заново" hint="Исполненные договоры за год базы" file={rep} onChange={setRep} />
+        <FilePick label="Загрузить ГПЗ заново" file={gpz} onChange={(f) => { setGpz(f); setIssues(null); }} />
+        <FilePick label="Загрузить отчётность заново" hint="Исполненные договоры за год базы" file={rep} onChange={(f) => { setRep(f); setIssues(null); }} />
+        {issues && <UploadReview issues={issues} trustVat={trustVat} setTrustVat={setTrustVat} />}
         <p className="hint">Новые файлы создадут новую версию прогноза, прежняя останется в истории. Если поменять только годы, прогноз пересчитается по тем же данным.</p>
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}

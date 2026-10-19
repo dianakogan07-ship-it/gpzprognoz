@@ -30,6 +30,8 @@ export interface VersionStats {
   forecastSum: number;
   /** Средний рост к базе, % */
   growth: number;
+  /** Рост посчитан от цены договоров */
+  growthBase?: "contract";
   needsReview: number;
   reviewed: number;
   edits: number;
@@ -119,6 +121,7 @@ export function statsOf(items: { base_price: number; forecast_price: number; con
     baseSum: Math.round(baseSum * 100) / 100,
     forecastSum: Math.round(forecastSum * 100) / 100,
     growth: baseSum ? Math.round((forecastSum / baseSum - 1) * 1000) / 10 : 0,
+    growthBase: "contract",
     needsReview: items.filter((i) => i.needs_review).length,
     reviewed: items.filter((i) => i.needs_review && i.reviewed).length,
     edits: items.filter((i) => i.manually_edited).length,

@@ -16,7 +16,7 @@ interface Explain {
   step2: { state: "off" | "applied" | "partial" | "none" | "not_needed"; coef: number | null; lastMonth: number | null; idx: IndexRef | null };
   step3: { branch: "industry" | "cpi" | "none"; level: "okpd2" | "okved2" | "cpi"; idx: IndexRef | null; needsApproval: boolean };
   basePrice: number; forecastPrice: number;
-  vat: number; vatFromFile: boolean; withVat: number;
+  vat: number; vatFromFile: boolean; withVat: number; vatFile?: number | null;
   edited?: boolean;
   row?: { title: string; forecastId: number; version: number; subject: string };
 }
@@ -44,7 +44,7 @@ function fromItem(it: ItemResp, ref: Reference): Explain {
     step2: { state, coef: state === "applied" || state === "partial" ? it.base_price / raw : null, lastMonth, idx: null },
     step3: { branch: d.indexLevel !== "cpi" ? "industry" : idx ? "cpi" : "none", level: d.indexLevel, idx, needsApproval: d.needsApproval },
     basePrice: it.base_price, forecastPrice: it.forecast_price,
-    vat, vatFromFile: d.vatRate != null, withVat: Math.round(it.forecast_price * (1 + vat) * 100) / 100,
+    vat, vatFromFile: d.vatRate != null, vatFile: d.vatFile ?? null, withVat: Math.round(it.forecast_price * (1 + vat) * 100) / 100,
     edited: it.manually_edited,
     row: { title: it.title, forecastId: it.forecast_id, version: it.version, subject: it.subject },
   };
@@ -64,7 +64,8 @@ function fromExample(ref: Reference, targetYear: number): Explain {
 }
 
 const rub = (n: number) => `${Math.round(n).toLocaleString("ru-RU")} ₽`;
-const pct = (k: number) => `${k < 1 ? "−" : "+"}${Math.abs((k - 1) * 100).toFixed(1).replace(".", ",")} %`;
+/** Проценты с двумя знаками: иначе ручной пересчёт по округлённым цифрам не сходится с ценой на экране */
+const pct = (k: number) => `${k < 1 ? "−" : "+"}${Math.abs((k - 1) * 100).toFixed(2).replace(".", ",")} %`;
 /** Название отрасли простыми словами: «Продукция и услуги сельского хозяйства» → «продукция и услуги сельского хозяйства» */
 const plain = (key: string | null, ref: Reference) => {
   const n = key ? industryName(key, ref) : null;
@@ -108,22 +109,23 @@ export default function LogicPage() {
   const industry = plain(s3.idx?.key ?? ex.okpd2, reference);
 
   // Шаг 2: рост внутри года
-  const step2Caption = s2.state === "off" ? "пересчёт не загружен" : s2.state === "not_needed" ? "договор декабря" : s2.state === "none" ? "нет данных за месяц"
+  const step2Caption = s2.state === "off" ? "пересчёт не загружен" : s2.state === "not_needed" ? "не нужен: договор заключён в последнем месяце с данными или позже" : s2.state === "none" ? "нет данных за месяц"
     : ex.months.length > 1 ? "рост внутри года, в среднем" : `рост с ${MONTHS_GEN_FROM(m0)} по ${s2.lastMonth ? MONTHS[s2.lastMonth - 1] : "последний месяц"}`;
   const steps = [
     { n: 1, value: rub(ex.price), caption: ex.contracts > 1 ? "медиана цен договоров" : "цена договора",
       info: <>Фактическая цена из отчётности за {by} год, за единицу и без НДС.{ex.contracts > 1 ? ` Договоров: ${ex.contracts}, взята медиана.` : ""}</>,
       what: `Берём цену из договора ${by} года по отчётности — за единицу и без НДС. Если договоров несколько, берём медиану — цену из середины списка, а цены, отличающиеся больше чем в 2 раза, не учитываем.`, tab: null },
-    { n: 2, value: s2.coef ? pct(s2.coef) : "+0,0 %", caption: step2Caption,
+    { n: 2, value: s2.coef ? pct(s2.coef) : "+0,00 %", caption: step2Caption,
       info: s2.state === "off" ? <>Индексы перерасчёта по месяцам за {by} год не загружены — шаг пропущен.</>
         : <>Росстат, цены производителей. {s2.idx?.source && <SrcLink s={s2.idx.source} />} {statusText(s2.idx) && `Индекс ${statusText(s2.idx)}.`} Вкладка «Перерасчёт цен по месяцам».</>,
       what: "Договор, заключённый в начале года, не учитывает последующий рост цен — доводим его цену до последнего месяца, за который Росстат опубликовал данные.", tab: "to_december" },
-    { n: 3, value: s3.idx ? pct(s3.idx.value) : "+0,0 %", caption: s3.branch === "industry" ? `рост отрасли в ${ty}` : s3.branch === "cpi" ? `общая инфляция ${ty}` : "индекса нет",
+    { n: 3, value: s3.idx ? pct(s3.idx.value) : "+0,00 %", caption: s3.branch === "industry" ? `рост отрасли в ${ty}` : s3.branch === "cpi" ? `общая инфляция ${ty}` : "индекса нет",
       warn: s3.branch !== "industry",
       info: <>{s3.branch === "industry" ? `Отрасль: ${industry}.` : `Индекса отрасли нет — взята общая инфляция.`} {s3.idx?.source && <SrcLink s={s3.idx.source} />} {statusText(s3.idx) && `Индекс ${statusText(s3.idx)}.`} Вкладка «{s3.branch === "industry" ? `Рост цен по отраслям ${ty}` : `Общая инфляция ${ty}`}».</>,
       what: `Умножаем цену на ожидаемый рост цен в отрасли позиции в ${ty} году. Отрасль определяем по коду ОКПД2 из ГПЗ.`, tab: s3.branch === "industry" ? "forecast" : "cpi" },
-    { n: 4, value: rub(ex.forecastPrice), sub: `${rub(ex.withVat)} с НДС ${Math.round(ex.vat * 100)} %`, caption: "без НДС",
-      info: <>{ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
+    { n: 4, value: rub(ex.forecastPrice), sub: `${rub(ex.withVat)} с НДС ${Math.round(ex.vat * 100)} %`, caption: `без НДС, итого рост ${pct(ex.forecastPrice / ex.price)}`,
+      info: <>{ex.vatFile != null ? `В ГПЗ указана ставка ${Math.round(ex.vatFile * 1000) / 10} % — без подтверждения применена ${Math.round(DEFAULT_VAT * 100)} %.` : ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{" "}
+        Итого рост = (1 + рост шага 2) × (1 + рост шага 3) − 1: второй рост начисляется на уже выросшую цену.{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
       what: "Получаем прогноз сразу в двух видах: без НДС и с НДС по ставке из строки ГПЗ.", tab: null },
   ];
   const cur = steps.find((s) => s.n === active);

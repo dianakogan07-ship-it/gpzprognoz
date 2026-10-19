@@ -6,14 +6,48 @@ export function normOkpd2(v: unknown): string | null {
   return m ? m[0].replace(/\.+$/, "") : null;
 }
 
-/** Регион по ОКАТО: самый длинный совпавший код справочника (учитывает ХМАО, ЯНАО, НАО) */
+/**
+ * Регион по ОКАТО: самый длинный совпавший код справочника (учитывает ХМАО, ЯНАО, НАО).
+ * Кода нет в справочнике — null: регион не угадывается.
+ */
 export function normRegion(v: unknown, regionCodes: string[]): string | null {
   if (v == null) return null;
   const digits = String(v).replace(/\D/g, "");
   if (digits.length < 2) return null;
   let best: string | null = null;
   for (const c of regionCodes) if (digits.startsWith(c) && (!best || c.length > best.length)) best = c;
-  return best ?? digits.slice(0, 2);
+  if (!best) return null;
+  // 71160 начинается с 71 (Тюменская область), но «711…» — коды автономных округов: такого округа нет — ошибка, а не Тюменская область
+  if (best.length === 2 && digits.length >= 5 && regionCodes.some((c) => c.length > 2 && c.startsWith(digits.slice(0, 3)))) return null;
+  return best;
+}
+
+const regionWords = (s: string) =>
+  s.toLowerCase().replace(/ё/g, "е").replace(/\bг\.|город(а)? федерального значения|город|федерального значения|автономн\S*|округ|област\S*|кра[йя]|республик\S*|[—–\-().,]/g, " ")
+    .split(/\s+/).filter((w) => w.length >= 3);
+
+/** Регион по названию: все значимые слова названия из справочника есть в тексте. Не узнали — null */
+export function regionByName(name: string | null, regions: { code: string; name: string }[]): string | null {
+  if (!name) return null;
+  const words = new Set(regionWords(name).map((w) => w.slice(0, 6)));
+  let best: { code: string; n: number } | null = null;
+  for (const r of regions) {
+    const need = regionWords(r.name).map((w) => w.slice(0, 6));
+    if (need.length && need.every((w) => words.has(w)) && (!best || need.length > best.n)) best = { code: r.code, n: need.length };
+  }
+  return best?.code ?? null;
+}
+
+/** Регион строки: код ОКАТО сверяется с названием региона из соседней колонки. Расхождение или неизвестный код — ошибка */
+export function resolveRegion(v: unknown, name: string | null, regions: { code: string; name: string }[]): { code: string | null; error: string | null } {
+  const raw = v == null ? "" : String(v).replace(/\D/g, "");
+  if (!raw) return { code: null, error: null };
+  const code = normRegion(raw, regions.map((r) => r.code));
+  const nameOf = (c: string) => regions.find((r) => r.code === c)?.name ?? c;
+  if (!code) return { code: null, error: `Код ОКАТО ${raw} не найден в справочнике регионов${name ? ` (в файле: «${name}»)` : ""}` };
+  const byName = regionByName(name, regions);
+  if (byName && byName !== code) return { code: null, error: `Код ОКАТО ${raw} (${nameOf(code)}) не совпадает с регионом «${name}»` };
+  return { code, error: null };
 }
 
 export function normWs(v: unknown): string | null {

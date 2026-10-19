@@ -5,13 +5,13 @@ import { IconDownload, IconEdit, IconHelp } from "./Icons";
 import { DEFAULT_VAT } from "@/lib/logic";
 import { avgGrowth } from "@/lib/report";
 import { Modal } from "./Modal";
-import type { ForecastRow } from "@/lib/forecast";
+import { contractPrice, type ForecastRow } from "@/lib/forecast";
 
 const withVat = (r: ForecastRow) => Math.round(r.forecastPrice * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100;
 import { Chip, MultiSelect } from "./MultiSelect";
 import {
   CONTRACTS_LABEL, EMPTY_FILTERS, FLAG_LABEL, REASON_TEXT, REPEAT_LABEL, SOURCE_LABEL, STATUS_LABEL,
-  actionHint, filterRows, filtersFromQuery, filtersToQuery, fmtGrowth, fmtRub, plural,
+  actionHint, filterRows, reasonDetail, filtersFromQuery, filtersToQuery, fmtGrowth, fmtRub, plural,
   regionKey, shortSource, sortRows,
   type ContractsBucket, type Filters, type Flag, type ReasonCode, type Repeat, type SortKey, type SourceKind, type Status, type ViewRow,
 } from "@/lib/forecastView";
@@ -38,20 +38,23 @@ export function Steps({ v, baseYear, sources }: { v: ViewRow; baseYear: number; 
   const src = shortSource(r.indexSourceCode, sources);
   const n = r.prices.length;
   const prices = r.prices.length > 7 ? `${r.prices.slice(0, 3).map(fmtNum).join(" / ")} … ${r.prices.slice(-2).map(fmtNum).join(" / ")}` : r.prices.map(fmtNum).join(" / ");
+  const intra = r.rawMedian > 0 && (r.toDecember === "applied" || r.toDecember === "partial") ? r.basePrice / r.rawMedian - 1 : 0;
   const dec = {
-    not_needed: "не требуется (договоры заключены в декабре)",
-    applied: `${fmtRub(r.basePrice)}`,
-    partial: `частично (не для всех договоров есть индекс), ${fmtRub(r.basePrice)}`,
+    not_needed: "не требуется (договоры заключены в последнем месяце с данными или позже)",
+    applied: `${fmtPct(intra)} → ${fmtRub(r.basePrice)}`,
+    partial: `частично (не для всех договоров есть индекс), ${fmtPct(intra)} → ${fmtRub(r.basePrice)}`,
     none: "нет данных, цена без изменений",
   }[r.toDecember];
-  const idx = r.indexLevel === "okpd2" ? `отраслевой индекс ОКПД2 ${r.indexKey}` : r.indexLevel === "okved2" ? `отраслевой индекс раздела ОКВЭД2 ${r.indexKey}` : r.indexApproved === null ? "индекс не найден" : "общая инфляция";
+  const name = r.indexName ? ` «${r.indexName}»` : "";
+  const idx = r.indexLevel === "okpd2" ? `индекс ОКПД2 ${r.indexKey}${name}` : r.indexLevel === "okved2" ? `индекс раздела ОКВЭД2 ${r.indexKey}` : r.indexApproved === null ? "индекс не найден" : "общая инфляция";
   return (
     <div className="space-y-3 text-sm">
       <p className="leading-relaxed text-slate-700">
         <b>{n} {plural(n, "договор", "договора", "договоров")} {baseYear} года:</b> {prices} ₽ за {r.unitLabel}, медиана {fmtRub(r.rawMedian)}
         <Arrow />пересчёт до последнего месяца с данными: {dec}
-        <Arrow />рост {fmtGrowth(v.growth)} ({idx}{src && <>, <a className="text-brand hover:underline" href={src.url} target="_blank" rel="noreferrer">{src.name}</a></>})
-        <Arrow /><b className="text-slate-900">прогноз {fmtRub(r.forecastPrice)}</b>
+        <Arrow />рост отрасли {fmtPct(r.forecastIndex - 1)} ({idx}{src && <>, <a className="text-brand hover:underline" href={src.url} target="_blank" rel="noreferrer">{src.name}</a></>})
+        <Arrow /><b className="text-slate-900">прогноз {fmtRub(r.forecastPrice)}</b>, итого рост {fmtGrowth(v.growth)}
+        {intra !== 0 && <span className="text-slate-500"> = (1 {intra < 0 ? "−" : "+"} {fmtNum2(Math.abs(intra) * 100)} %) × (1 {r.forecastIndex < 1 ? "−" : "+"} {fmtNum2(Math.abs(r.forecastIndex - 1) * 100)} %) − 1</span>}
       </p>
       <div className="grid gap-3 md:grid-cols-2">
         {r.repeatable === false && <p className="text-slate-600">Разовая закупка — цена справочная.</p>}
@@ -66,6 +69,8 @@ export function Steps({ v, baseYear, sources }: { v: ViewRow; baseYear: number; 
   );
 }
 const Arrow = () => <span className="mx-1.5 text-slate-400">→</span>;
+const fmtNum2 = (n: number) => n.toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = (x: number) => `${x < 0 ? "−" : "+"}${fmtNum2(Math.abs(x) * 100)} %`;
 const fmtNum = (n: number) => n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
 
 function SortTh({ k, f, set, children, right, extra }: { k: SortKey; f: Filters; set: (p: Partial<Filters>) => void; children: React.ReactNode; right?: boolean; extra?: ReactNode }) {
@@ -291,9 +296,10 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                             <td className="pl-6 text-slate-700">
                               {r.regionName ?? r.region ?? "Регион не указан"}
                               {(v.reasons.length > 0 || v.meta?.edited) && <span title="Есть замечания — откройте карточку" className="ml-1.5 text-amber-600">•</span>}
+                              {r.gpzNames?.[0] && <div className="max-w-[22rem] truncate text-xs text-slate-400" title={r.gpzNames.join("\n")}>{r.gpzNames[0]}</div>}
                             </td>
                             <td className="whitespace-nowrap text-slate-700">{r.unitLabel}</td>
-                            <td className="whitespace-nowrap text-right">{fmtRub(r.basePrice)}</td>
+                            <td className="whitespace-nowrap text-right">{fmtRub(contractPrice(r))}</td>
                             <td className="text-right">
                               <div className="whitespace-nowrap font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</div>
                               <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
@@ -330,7 +336,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             <button className="btn" onClick={() => setCard(null)}>Закрыть</button>
           </>}>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {([[`Цена ${baseYear} без НДС`, fmtRub(card.row.basePrice)], [`Прогноз ${targetYear} без НДС`, fmtRub(card.row.forecastPrice)], [`Прогноз ${targetYear} с НДС`, fmtRub(withVat(card.row))], ["Рост", fmtGrowth(card.growth)]] as const).map(([l, val]) => (
+            {([[`Цена договоров ${baseYear} без НДС`, fmtRub(contractPrice(card.row))], [`Прогноз ${targetYear} без НДС`, fmtRub(card.row.forecastPrice)], [`Прогноз ${targetYear} с НДС`, fmtRub(withVat(card.row))], ["Рост", fmtGrowth(card.growth)]] as const).map(([l, val]) => (
               <div key={l} className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">{l}</p><p className="font-semibold text-slate-900">{val}</p></div>
             ))}
           </div>
@@ -340,7 +346,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
             <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
               <p className="font-medium">Обратите внимание</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5">
-                {card.reasons.map((x) => <li key={x}>{REASON_TEXT[x]}</li>)}
+                {card.reasons.map((x) => { const d = reasonDetail(card.row, x); return <li key={x}>{REASON_TEXT[x]}{d && <span className="text-amber-800/80"> ({d})</span>}</li>; })}
                 {card.meta?.edited && <li>Цена изменена вручную</li>}
               </ul>
             </div>

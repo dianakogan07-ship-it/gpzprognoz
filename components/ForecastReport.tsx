@@ -5,7 +5,8 @@ import { MultiSelect } from "./MultiSelect";
 import type { ForecastFilters } from "./ForecastTable";
 import { EMPTY_FILTERS, filterRows, regionKey, type ViewRow } from "@/lib/forecastView";
 import { lastDataMonth } from "@/lib/logic";
-import { RC, evenCeil, fmtNum, fmtPct, groupSplit, shortRegion, splitGrowth, ticks } from "@/lib/report";
+import { RC, evenCeil, fmtMoney, fmtNum, fmtPct, groupSplit, shortRegion, splitGrowth, sumBase, sumForecast, ticks } from "@/lib/report";
+import { contractPrice } from "@/lib/forecast";
 import { isActiveIndex, type Reference } from "@/lib/types";
 import type { ForecastRow } from "@/lib/forecast";
 import { plural } from "@/lib/forecastView";
@@ -47,6 +48,10 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
   const above = cpi == null ? 0 : subjects.filter((g) => r1(g.total) > r1(cpi)).length;
   const equal = cpi == null ? 0 : subjects.filter((g) => r1(g.total) === r1(cpi)).length;
   const top = subjects[0];
+  // Доля суммы ГПЗ у предметов дороже инфляции: 8 мелких и 8 крупных предметов — разные ситуации
+  const totalSum = rows.reduce((s, r) => s + (sumBase(r) ?? 0), 0);
+  const aboveShare = cpi == null || !totalSum ? null
+    : (subjects.filter((g) => r1(g.total) > r1(cpi)).reduce((s, g) => s + g.rows.reduce((t, r) => t + (sumBase(r) ?? 0), 0), 0) / totalSum) * 100;
   const widest = multi.map((x) => ({ x, d: x.regs[0].fc > 0 ? (x.regs[x.regs.length - 1].fc / x.regs[0].fc - 1) * 100 : 0 })).sort((a, b) => b.d - a.d)[0];
 
   // Счётчики для фильтров — по всем позициям
@@ -107,6 +112,20 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
       ...reg.flatMap((it) => it.regs.map((r, i) => [it.subject, it.unit, r.name, Math.round(r.base * 100) / 100, Math.round(r.fc * 100) / 100,
         i === 0 ? "минимум" : p1((r.fc / it.regs[0].fc - 1) * 100)])),
     ], [50, 10, 40, 20, 20, 20]);
+    const money = moneyData(slice);
+    if (money.hasSums) {
+      const r0 = (v: number) => Math.round(v);
+      add("Суммы по категориям", [...head,
+        ["Категория", `Сумма ${baseYear}, ₽ без НДС`, `Потребность ${year}, ₽ без НДС`, "Прирост, ₽", "Рост, %"],
+        ...money.cats.map((c) => [c.key || "Без категории", r0(c.base), r0(c.fc), r0(c.fc - c.base), p1(c.base ? (c.fc / c.base - 1) * 100 : 0)]),
+        ["Итого", r0(money.base), r0(money.fc), r0(money.fc - money.base), p1(money.base ? (money.fc / money.base - 1) * 100 : 0)],
+      ], [48, 22, 24, 18, 10]);
+      add("Топ-10 по приросту", [...head,
+        ["Позиция", "Регион", "ОКПД2", `Сумма ${baseYear}, ₽`, `Потребность ${year}, ₽`, "Прирост, ₽"],
+        ...money.top.map(({ r, base, fc, d }) => [r.gpzNames?.[0] ?? r.subject, r.regionName ?? "", r.okpd2, r0(base), r0(fc), r0(d)]),
+      ], [50, 30, 16, 18, 20, 16]);
+    }
+    add("Надёжность", [...head, [money.byWeight ? "Источник цены (доля суммы)" : "Источник цены (доля позиций)", "%"], ...money.trust.map((t) => [t.label, p1(t.v)])], [50, 10]);
     add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
     const { downloadWorkbook } = await import("@/lib/excel");
     downloadWorkbook(wb, `Отчёт — прогноз цен ${year} — ${title}${f.category.length || f.region.length ? " (срез)" : ""}${approved ? "" : " (не утверждён)"}.xlsx`.replace(/[\\/:*?"<>|]+/g, " "));
@@ -161,7 +180,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
                 <p className="text-[11.5px] text-white/75">{cpi != null ? `инфляция, прогноз ${cpiSource}: ${fmtPct(cpi)}` : "прогноза инфляции в базе нет"}</p>
               </div>
               {cpi != null && <Kpi label="Дороже инфляции" value={<>{above} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>из {subjects.length}</small></>}
-                note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %`} />}
+                note={`${plural(subjects.length, "предмет", "предмета", "предметов")} закупки растут быстрее ${fmtNum(cpi)} %${aboveShare != null ? ` — это ${fmtNum(aboveShare, 0)} % суммы ГПЗ` : ""}`} />}
               {top && <Kpi label="Максимальный рост" value={fmtPct(top.total)} note={top.key} />}
               {widest && <Kpi label="Разница цен между регионами" value={`до +${fmtNum(widest.d, 0)} %`} note={widest.x.subject} />}
             </div>
@@ -207,7 +226,7 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
             {single.length > 0 && (
               <p className="text-xs" style={{ color: RC.ink2 }}>
                 <b style={{ color: RC.ink }}>Только в одном регионе: </b>
-                {single.map((x) => `${x.subject} (${shortRegion(x.regs[0].name)})`).join(" · ")}
+                {[...new Set(single.map((x) => `${x.subject}, ${x.unit} (${shortRegion(x.regs[0].name)})`))].join(" · ")}
               </p>
             )}
             {sources.length > 0 && (
@@ -217,6 +236,9 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
               </p>
             )}
           </Sheet>
+
+          {/* Лист 4. Деньги и надёжность расчёта */}
+          <Sheet><MoneySheet view={slice} year={year} baseYear={baseYear} shortCat={shortCat} /></Sheet>
         </div>
       )}
 
@@ -227,6 +249,126 @@ export function ForecastReport({ view, filters, reference, year, baseYear, appro
         </div>
       )}
     </div>
+  );
+}
+
+/** Суммы по категориям, топ-10 по приросту, надёжность расчёта, закупки по кварталам и замечания к данным */
+export function moneyData(view: ViewRow[]) {
+  const rows = view.map((v) => v.row);
+  const withSum = rows.filter((r) => sumBase(r) != null);
+  const base = withSum.reduce((s, r) => s + sumBase(r)!, 0);
+  const fc = withSum.reduce((s, r) => s + sumForecast(r)!, 0);
+  const catMap = new Map<string, { base: number; fc: number }>();
+  for (const r of withSum) {
+    const e = catMap.get(r.category ?? "") ?? { base: 0, fc: 0 };
+    e.base += sumBase(r)!; e.fc += sumForecast(r)!; catMap.set(r.category ?? "", e);
+  }
+  const cats = [...catMap.entries()].map(([key, e]) => ({ key, ...e })).sort((a, b) => b.fc - a.fc);
+  const top = withSum.map((r) => ({ r, base: sumBase(r)!, fc: sumForecast(r)!, d: sumForecast(r)! - sumBase(r)! })).sort((a, b) => b.d - a.d).slice(0, 10);
+  // Надёжность: доля суммы (если сумм нет — доля позиций) по источнику цены
+  const weight = (v: ViewRow) => (base ? sumBase(v.row) ?? 0 : 1);
+  const all = view.reduce((s, v) => s + weight(v), 0) || 1;
+  const share = (pred: (v: ViewRow) => boolean) => (view.filter(pred).reduce((s, v) => s + weight(v), 0) / all) * 100;
+  const trust = [
+    { label: "изменено вручную", c: RC.warn, v: share((v) => !!v.meta?.edited) },
+    { label: "отраслевой индекс по коду ОКПД2", c: RC.navy, v: share((v) => !v.meta?.edited && v.row.indexLevel === "okpd2") },
+    { label: "индекс раздела ОКВЭД2", c: RC.blue, v: share((v) => !v.meta?.edited && v.row.indexLevel === "okved2") },
+    { label: "общая инфляция", c: RC.sky, v: share((v) => !v.meta?.edited && v.row.indexLevel === "cpi") },
+  ];
+  const quarters = [0, 1, 2, 3].map((q) => rows.reduce((s, r) => s + (r.quarters?.[q] ?? 0), 0));
+  const dsByCat = new Map<string, number[]>();
+  for (const r of rows) if (r.dsUp?.length) dsByCat.set(r.category ?? "", [...(dsByCat.get(r.category ?? "") ?? []), ...r.dsUp]);
+  return {
+    hasSums: withSum.length > 0, partial: withSum.length < rows.length, base, fc, cats, top, trust, byWeight: base > 0, quarters,
+    ds: [...dsByCat.entries()].map(([k, xs]) => ({ key: k, n: xs.length, avg: (xs.reduce((s, x) => s + x, 0) / xs.length) * 100 })),
+    active: rows.reduce((s, r) => s + (r.activeTarget ?? 0), 0),
+    long: rows.reduce((s, r) => s + (r.longContracts ?? 0), 0),
+    lots: rows.filter((r) => r.lotPrice).length,
+    later: rows.reduce((s, r) => s + (r.laterYear ?? 0), 0),
+  };
+}
+
+function MoneySheet({ view, year, baseYear, shortCat }: { view: ViewRow[]; year: number; baseYear: number; shortCat: (n: string) => string }) {
+  const m = moneyData(view);
+  const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
+  const td = "border-t py-1.5 pr-3";
+  const qMax = Math.max(1, ...m.quarters);
+  const notes = [
+    ...m.ds.map((d) => `${d.key || "Без категории"}: ${d.n} ${plural(d.n, "договор увеличен", "договора увеличены", "договоров увеличены")} допсоглашениями в среднем на ${fmtNum(d.avg)} % к предложению победителя — цена за единицу может быть завышена`),
+    m.active ? `${m.active} ${plural(m.active, "договор действует", "договора действуют", "договоров действуют")} весь ${year} год — по ним закупка может не понадобиться` : "",
+    m.long ? `${m.long} ${plural(m.long, "договор", "договора", "договоров")} длиннее года: цена отнесена к середине срока; в новой закупке на несколько лет учтите рост цен следующих лет` : "",
+    m.later ? `${m.later} ${plural(m.later, "договор заключён", "договора заключены", "договоров заключены")} после ${baseYear} года — без пересчёта внутри года` : "",
+    m.lots ? `${m.lots} ${plural(m.lots, "позиция", "позиции", "позиций")} с ценой за весь лот (количество 1) — в сравнении регионов не участвуют` : "",
+  ].filter(Boolean);
+  return (
+    <>
+      <div>
+        <h2 className="text-xl font-semibold">Сумма закупок и надёжность расчёта</h2>
+        <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Сумма — цена за единицу × количество из ГПЗ {baseYear}, без НДС. Для {year} объём принят таким же, как в {baseYear}.</p>
+      </div>
+      {!m.hasSums ? <p className="text-sm" style={{ color: RC.muted }}>В этой версии не сохранено количество — суммы появятся после повторной загрузки файлов ГПЗ и отчётности.</p> : <>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <Kpi label={`Сумма ГПЗ ${baseYear}`} value={fmtMoney(m.base)} note="по ценам договоров" />
+          <Kpi label={`Потребность ${year}`} value={fmtMoney(m.fc)} note={`по прогнозным ценам, ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)}`} />
+          <Kpi label="Прирост" value={fmtMoney(m.fc - m.base)} note={m.partial ? "часть позиций без количества не учтена" : "при том же объёме закупок"} />
+        </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Box title="Сумма по категориям">
+            <table className="w-full text-xs" style={NUM}>
+              <thead style={{ color: RC.muted }}><tr><th className={th}>Категория</th><th className={`${th} text-right`}>{baseYear}</th><th className={`${th} text-right`}>{year}</th><th className={`${th} text-right`}>Рост</th></tr></thead>
+              <tbody>{m.cats.map((c) => (
+                <tr key={c.key} style={{ borderColor: RC.line }}>
+                  <td className={td} style={{ borderColor: RC.line }} title={c.key}>{shortCat(c.key)}</td>
+                  <td className={`${td} text-right whitespace-nowrap`} style={{ borderColor: RC.line }}>{fmtMoney(c.base)}</td>
+                  <td className={`${td} text-right whitespace-nowrap font-semibold`} style={{ borderColor: RC.line }}>{fmtMoney(c.fc)}</td>
+                  <td className={`${td} text-right whitespace-nowrap`} style={{ borderColor: RC.line, color: RC.ink2 }}>{fmtPct(c.base ? (c.fc / c.base - 1) * 100 : 0)}</td>
+                </tr>))}</tbody>
+            </table>
+          </Box>
+          <Box title="Топ-10: больше всего прироста в рублях">
+            <table className="w-full text-xs" style={NUM}>
+              <thead style={{ color: RC.muted }}><tr><th className={th}>Позиция</th><th className={`${th} text-right`}>{year}</th><th className={`${th} text-right`}>Прирост</th></tr></thead>
+              <tbody>{m.top.map(({ r, fc, d }, i) => (
+                <tr key={i}>
+                  <td className={td} style={{ borderColor: RC.line }}><span className="line-clamp-2" data-tip={`${r.subject} · ${r.regionName ?? ""} · ОКПД2 ${r.okpd2}`}>{r.gpzNames?.[0] ?? r.subject}</span>
+                    <small style={{ color: RC.muted }}>{r.regionName ? shortRegion(r.regionName) : ""}</small></td>
+                  <td className={`${td} text-right whitespace-nowrap`} style={{ borderColor: RC.line }}>{fmtMoney(fc)}</td>
+                  <td className={`${td} text-right whitespace-nowrap font-semibold`} style={{ borderColor: RC.line }}>+{fmtMoney(d)}</td>
+                </tr>))}</tbody>
+            </table>
+          </Box>
+        </div>
+      </>}
+      <div className="grid gap-3 lg:grid-cols-2">
+        <Box title={`Надёжность расчёта${m.byWeight ? " — доля суммы" : " — доля позиций"}`}>
+          <div className="flex h-4 overflow-hidden rounded" style={{ background: RC.track }}>
+            {m.trust.filter((t) => t.v > 0).map((t) => <div key={t.label} style={{ width: `${t.v}%`, background: t.c }} data-tip={`${t.label}: ${fmtNum(t.v)} %`} />)}
+          </div>
+          <ul className="mt-3 space-y-1 text-xs" style={{ color: RC.ink2 }}>
+            {m.trust.map((t) => <li key={t.label} className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: t.c }} /><span className="flex-1">{t.label}</span><b style={{ ...NUM, color: RC.ink }}>{fmtNum(t.v)} %</b></li>)}
+          </ul>
+        </Box>
+        <Box title={`Закупки по кварталам (план ${baseYear})`}>
+          {m.quarters.some(Boolean) ? (
+            <div className="flex h-28 items-end gap-3">
+              {m.quarters.map((n, i) => (
+                <div key={i} className="flex flex-1 flex-col items-center gap-1 text-xs" style={NUM}>
+                  <b>{n}</b>
+                  <div className="w-full rounded-t" style={{ height: `${(n / qMax) * 70}px`, background: RC.blue }} />
+                  <span style={{ color: RC.muted }}>{i + 1} кв.</span>
+                </div>
+              ))}
+            </div>
+          ) : <p className="text-xs" style={{ color: RC.muted }}>Квартал закупки появится после повторной загрузки ГПЗ.</p>}
+        </Box>
+      </div>
+      {notes.length > 0 && (
+        <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2 }}>
+          <p className="mb-1 font-semibold" style={{ color: RC.ink }}>Обратите внимание</p>
+          <ul className="list-disc space-y-0.5 pl-4">{notes.map((n) => <li key={n}>{n}</li>)}</ul>
+        </div>
+      )}
+    </>
   );
 }
 
@@ -275,10 +417,12 @@ function Waterfall({ split, year, baseYear, lastMonth }: { split: { total: numbe
   const hi = Math.max(100, 100 + split.intra, 100 + split.total);
   const floor = Math.max(0, Math.floor(lo - Math.max(hi - lo, 2) * 1.2));
   const h = (v: number) => ((v - floor) / (hi - floor || 1)) * 100;
+  const rate = ((100 + split.total) / (100 + split.intra) - 1) * 100;
   const bars = [
     { from: floor, to: 100, color: RC.navy, label: "100 %", brk: true, tip: `Медианная цена договоров ${baseYear} без НДС принята за 100 %` },
     { from: 100, to: 100 + split.intra, color: RC.sky, label: fmtPct(split.intra), tip: `Пересчёт цены договора до последнего месяца с данными Росстата: ${fmtPct(split.intra)}` },
-    { from: 100 + split.intra, to: 100 + split.total, color: RC.blue, label: fmtPct(split.industry), tip: `Рост цен в отрасли в ${year} по прогнозу: ${fmtPct(split.industry)}` },
+    // Рост отрасли начисляется на уже выросшую цену: подпись — сам рост отрасли, высота столбика — его вклад в п.п. от цены договора
+    { from: 100 + split.intra, to: 100 + split.total, color: RC.blue, label: fmtPct(rate), tip: `Рост цен в отрасли в ${year} по прогнозу: ${fmtPct(rate)} к уже выросшей цене (${fmtNum(split.industry)} п.п. от цены договора). Итого: (1 ${split.intra < 0 ? "−" : "+"} ${fmtNum(Math.abs(split.intra), 2)} %) × (1 ${rate < 0 ? "−" : "+"} ${fmtNum(Math.abs(rate), 2)} %) − 1 = ${fmtPct(split.total)}` },
     { from: floor, to: 100 + split.total, color: RC.violet, label: `${fmtNum(100 + split.total)} %`, inside: true, brk: true, tip: `Прогноз цены ${year} к цене договоров ${baseYear}` },
   ];
   const caps: [string, string][] = [
@@ -425,16 +569,17 @@ function Strip({ above, equal, below, cpi }: { above: number; equal: number; bel
 
 /** Все предметы среза с регионами: регионы по возрастанию прогноза */
 function regionTable(rows: ForecastRow[]) {
+  // Сравниваем только одинаковые полные коды ОКПД2 с одной единицей; цена всего лота (1 ед.) не сравнивается
   const m = new Map<string, ForecastRow[]>();
-  for (const r of rows) { const k = `${r.subject}|${r.unitLabel}`; m.get(k)?.push(r) ?? m.set(k, [r]); }
+  for (const r of rows) { if (r.lotPrice) continue; const k = `${r.okpd2}|${r.unitLabel}`; m.get(k)?.push(r) ?? m.set(k, [r]); }
   return [...m.values()].map((rs) => {
     // Несколько строк одного региона (разные коды WS) — среднее
     const byReg = new Map<string, ForecastRow[]>();
     for (const r of rs) { const k = r.regionName ?? r.region ?? "Регион не указан"; byReg.get(k)?.push(r) ?? byReg.set(k, [r]); }
     const regs = [...byReg.entries()].map(([name, g]) => ({
-      name, base: g.reduce((s, r) => s + r.basePrice, 0) / g.length, fc: g.reduce((s, r) => s + r.forecastPrice, 0) / g.length,
+      name, base: g.reduce((s, r) => s + contractPrice(r), 0) / g.length, fc: g.reduce((s, r) => s + r.forecastPrice, 0) / g.length,
     })).sort((x, y) => x.fc - y.fc);
-    return { subject: rs[0].subject, unit: rs[0].unitLabel, regs };
+    return { subject: rs[0].gpzNames?.[0] && rs[0].subject.length < 4 ? rs[0].gpzNames[0] : rs[0].subject, okpd2: rs[0].okpd2, unit: rs[0].unitLabel, regs };
   });
 }
 
@@ -461,9 +606,9 @@ function DotPlot({ items, year, baseYear }: { items: ReturnType<typeof regionTab
         // Подпись ставим в ту строку (над или под линией), где она дальше от предыдущей подписи
         const lastIn = { up: -99, dn: -99 };
         return (
-          <Row key={`${r.subject}|${r.unit}`}>
+          <Row key={`${r.okpd2}|${r.unit}`}>
             <div className="flex min-h-[46px] flex-wrap content-center gap-x-1 border-t pt-2 text-xs leading-tight sm:pt-0" style={{ borderColor: RC.line }}>
-              <span className="line-clamp-2" data-tip={r.subject}>{r.subject}</span> <small style={{ color: RC.muted }}>₽/{r.unit}</small>
+              <span className="line-clamp-2" data-tip={`${r.subject} · ОКПД2 ${r.okpd2}`}>{r.subject}</span> <small style={{ color: RC.muted }}>₽/{r.unit}</small>
             </div>
             <div className="relative h-[30px] sm:h-[46px] sm:border-t" style={{ borderColor: RC.line }}>
               {grid.slice(1).map((t) => <div key={t} className="absolute inset-y-0 border-l border-dotted" style={{ left: `${X(t)}%`, borderColor: "#D5D9E6" }} />)}

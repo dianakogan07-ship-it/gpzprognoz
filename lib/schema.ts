@@ -152,5 +152,16 @@ ALTER TABLE forecasts ADD CONSTRAINT forecasts_status_check CHECK (status IN ('d
 ALTER TABLE forecast_versions DROP CONSTRAINT IF EXISTS forecast_versions_status_check;
 ALTER TABLE forecast_versions ADD CONSTRAINT forecast_versions_status_check CHECK (status IN ('draft', 'review', 'approved', 'rejected', 'archived'));
 -- Строки файлов, не вошедшие в расчёт версии
-ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS excluded_rows JSONB NOT NULL DEFAULT '[]'
+ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS excluded_rows JSONB NOT NULL DEFAULT '[]';
+-- Названия групп ОКПД2, по которым есть отраслевые индексы
+INSERT INTO okpd2 (code, name) VALUES ('19.2', 'Нефтепродукты'), ('24.4', 'Металлы основные драгоценные и цветные прочие, ядерное топливо') ON CONFLICT (code) DO NOTHING;
+-- Отпечаток загруженных файлов: повторная загрузка тех же файлов требует подтверждения
+ALTER TABLE forecast_versions ADD COLUMN IF NOT EXISTS files_hash TEXT;
+-- Средний рост считается от цены договоров (а не от цены после пересчёта внутри года): пересчёт итогов сохранённых версий
+UPDATE forecast_versions v SET stats = v.stats || jsonb_build_object('growth', x.g, 'baseSum', x.b, 'growthBase', 'contract')
+  FROM (SELECT version_id, sum(COALESCE(NULLIF((data->>'rawMedian')::numeric, 0), base_price)) AS b,
+          CASE WHEN sum(COALESCE(NULLIF((data->>'rawMedian')::numeric, 0), base_price)) > 0
+               THEN round((sum(forecast_price) / sum(COALESCE(NULLIF((data->>'rawMedian')::numeric, 0), base_price)) - 1) * 1000) / 10 ELSE 0 END AS g
+          FROM forecast_items GROUP BY version_id) x
+ WHERE x.version_id = v.id AND v.stats ? 'growth' AND v.stats->>'growthBase' IS NULL
 `;

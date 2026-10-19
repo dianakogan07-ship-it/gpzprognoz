@@ -110,7 +110,7 @@ export default function ComparePage({ params }: { params: { id: string } }) {
     if (!gpz || !rep || !reference || !f) return;
     setBusy(true); setError(null);
     try {
-      const g = parseGpz(await gpz.arrayBuffer(), reference.regions.map((r) => r.code));
+      const g = parseGpz(await gpz.arrayBuffer(), reference.regions);
       const r = parseReport(await rep.arrayBuffer());
       // Фактические цены прогнозного года — медиана по тем же позициям, без индексации
       const res = buildForecast(g.rows, r.rows, reference, { baseYear: f.year, targetYear: f.year + 1 });

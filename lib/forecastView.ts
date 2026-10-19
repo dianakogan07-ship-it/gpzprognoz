@@ -1,4 +1,4 @@
-import type { ExcludedRow, ForecastRow } from "./forecast";
+import { contractPrice, type ExcludedRow, type ForecastRow } from "./forecast";
 import type { Source } from "./types";
 
 /* ---------- Статус позиции ---------- */
@@ -6,7 +6,8 @@ import type { Source } from "./types";
 export type Status = "reliable" | "check" | "lowdata";
 export const STATUS_LABEL: Record<Status, string> = { reliable: "Надёжно", check: "Проверить", lowdata: "Мало данных" };
 
-export type ReasonCode = "cpi" | "no_index" | "unapproved" | "not_december" | "repeat_unknown" | "few_contracts";
+export type ReasonCode = "cpi" | "no_index" | "unapproved" | "not_december" | "repeat_unknown" | "few_contracts"
+  | "vat_file" | "later_year" | "long" | "ds" | "active" | "months" | "lot" | "okpd_short";
 export const REASON_TEXT: Record<ReasonCode, string> = {
   cpi: "Отраслевой индекс не найден — применена общая инфляция",
   no_index: "Нет ни отраслевого индекса, ни общей инфляции — цена не пересчитана на следующий год",
@@ -14,7 +15,27 @@ export const REASON_TEXT: Record<ReasonCode, string> = {
   not_december: "Цена не доведена до уровня последнего месяца с данными — нет индекса пересчёта за месяц договора",
   repeat_unknown: "Не определено, повторяющаяся ли это закупка",
   few_contracts: "Меньше трёх договоров — цена может быть случайной",
+  vat_file: "В файле указана ставка НДС, отличная от 22 % — в расчёте взята 22 %",
+  later_year: "Есть договоры, заключённые после базового года — пересчёт внутри года к ним не применялся",
+  long: "Есть договоры длиннее года: цена отнесена к середине срока, в новой закупке нужно учесть рост цен на следующие годы",
+  ds: "Сумма договора выросла по допсоглашению — цена за единицу может быть завышена",
+  active: "Договор действует весь год прогноза — закупка может не понадобиться",
+  months: "Количество месяцев в ГПЗ не совпадает со сроком договора — цена за месяц может быть неверной",
+  lot: "Цена за весь лот (количество 1) — не сравнивается между регионами",
+  okpd_short: "ОКПД2 указан только классом (две цифры) — проверьте код в ГПЗ",
 };
+
+/** Подробности причины по строке: «0 %», «+17 %», «12 мес. в ГПЗ, 18 мес. по договору» */
+export function reasonDetail(r: ForecastRow, code: ReasonCode): string | null {
+  const pct = (x: number) => `${x >= 0 ? "+" : "−"}${Math.abs(Math.round(x * 1000) / 10).toString().replace(".", ",")} %`;
+  if (code === "vat_file" && r.vatFile != null) return `в файле ${Math.round(r.vatFile * 1000) / 10} %`;
+  if (code === "later_year" && r.laterYear) return `договоров: ${r.laterYear}`;
+  if (code === "long" && r.longContracts) return `договоров: ${r.longContracts}`;
+  if (code === "ds" && r.dsUp?.length) return `рост к предложению победителя: ${r.dsUp.map(pct).join(", ")}`;
+  if (code === "active" && r.activeTarget) return `договоров: ${r.activeTarget}`;
+  if (code === "months" && r.monthMismatch?.length) return r.monthMismatch.map(([g, m]) => `${g} мес. в ГПЗ, ${m} мес. по договору`).join("; ");
+  return null;
+}
 
 export function reasonsOf(r: ForecastRow): ReasonCode[] {
   const out: ReasonCode[] = [];
@@ -23,6 +44,14 @@ export function reasonsOf(r: ForecastRow): ReasonCode[] {
   if (r.toDecember === "none" || r.toDecember === "partial") out.push("not_december");
   if (r.repeatable === null) out.push("repeat_unknown");
   if (r.contracts < 3) out.push("few_contracts");
+  if (r.vatFile != null) out.push("vat_file");
+  if (r.laterYear) out.push("later_year");
+  if (r.longContracts) out.push("long");
+  if (r.dsUp?.length) out.push("ds");
+  if (r.activeTarget) out.push("active");
+  if (r.monthMismatch?.length) out.push("months");
+  if (r.lotPrice) out.push("lot");
+  if (/^\d{2}$/.test(r.okpd2)) out.push("okpd_short");
   return out;
 }
 
@@ -60,8 +89,8 @@ export function toViewRows(rows: ForecastRow[], metas?: RowMeta[]): ViewRow[] {
     meta: metas?.[id],
     status: statusOf(row),
     reasons: reasonsOf(row),
-    growth: Math.round((row.forecastIndex - 1) * 1000) / 10,
-    search: `${row.subject} ${row.okpd2} ${row.okpd2Name}`.toLowerCase(),
+    growth: Math.round((row.forecastPrice / contractPrice(row) - 1) * 1000) / 10,
+    search: `${row.subject} ${row.okpd2} ${row.okpd2Name} ${(row.gpzNames ?? []).join(" ")}`.toLowerCase(),
   }));
 }
 
@@ -145,7 +174,7 @@ export function sortRows(rows: ViewRow[], key: SortKey | null, dir: "asc" | "des
   const get: Record<SortKey, (v: ViewRow) => string | number> = {
     subject: (v) => v.row.subject.toLowerCase(),
     region: (v) => (v.row.regionName ?? v.row.region ?? "").toLowerCase(),
-    price: (v) => v.row.basePrice,
+    price: (v) => contractPrice(v.row),
     growth: (v) => v.growth,
     forecast: (v) => v.row.forecastPrice,
   };
@@ -208,24 +237,27 @@ export function filtersFromQuery(qs: string | URLSearchParams): Filters {
 
 export interface ActionHint { reason: ReasonCode; count: number; text: string; href: string; action: string }
 
+const HINTS = { cpi: 1, no_index: 1, unapproved: 1, not_december: 1, repeat_unknown: 1 } as const;
+type HintCode = keyof typeof HINTS;
+
 /** Если одна причина «Проверить» у ≥ 80 % позиций — одна общая подсказка вместо повторения в строках */
 export function actionHint(rows: ViewRow[], threshold = 0.8): ActionHint | null {
   if (!rows.length) return null;
   const counts = new Map<ReasonCode, number>();
-  for (const v of rows) for (const r of v.reasons) if (r !== "few_contracts") counts.set(r, (counts.get(r) ?? 0) + 1);
+  for (const v of rows) for (const r of v.reasons) if (r in HINTS) counts.set(r, (counts.get(r) ?? 0) + 1);
   let best: [ReasonCode, number] | null = null;
   for (const e of counts) if (!best || e[1] > best[1]) best = e;
   if (!best || best[1] / rows.length < threshold) return null;
   const [reason, n] = best;
   const pos = `${n} ${plural(n, "позиции", "позиций", "позиций")}`;
-  const map: Record<Exclude<ReasonCode, "few_contracts">, Omit<ActionHint, "reason" | "count">> = {
+  const map: Record<HintCode, Omit<ActionHint, "reason" | "count">> = {
     cpi: { text: `Для ${pos} применена общая инфляция — добавьте отраслевые индексы, чтобы прогноз стал точнее`, href: "/indices", action: "Перейти к индексам" },
     no_index: { text: `Для ${pos} нет ни отраслевого индекса, ни общей инфляции — добавьте индексы роста цен`, href: "/indices", action: "Перейти к индексам" },
     unapproved: { text: `Для ${pos} применён неутверждённый индекс — проверьте и утвердите индексы`, href: "/indices", action: "Перейти к индексам" },
     not_december: { text: `Для ${pos} цена не доведена до уровня декабря — добавьте индексы пересчёта внутри года`, href: "/indices", action: "Перейти к индексам" },
     repeat_unknown: { text: `Для ${pos} не определено, повторяющаяся ли закупка — дополните справочник повторяемости`, href: "/directories", action: "Перейти к справочникам" },
   };
-  return { reason, count: n, ...map[reason as Exclude<ReasonCode, "few_contracts">] };
+  return { reason, count: n, ...map[reason as HintCode] };
 }
 
 export function plural(n: number, one: string, few: string, many: string) {

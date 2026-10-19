@@ -13,7 +13,7 @@ import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecas
 import { PICK_STATUSES, STATUS_TITLE, isFrozen, type ForecastStatus, type SnapshotIndex, type VersionStats } from "@/lib/forecasts/model";
 import { toViewRows, fmtGrowth, fmtRub, plural, type ViewRow } from "@/lib/forecastView";
 import { formatGrowth, industryLabel, MONTHS } from "@/lib/indexFormat";
-import type { ExcludedRow, ForecastRow } from "@/lib/forecast";
+import { contractPrice, type ExcludedRow, type ForecastRow } from "@/lib/forecast";
 import type { RowMeta } from "@/lib/forecastView";
 
 interface Version { id: number; number: number; status: ForecastStatus; comment: string | null; stats: VersionStats; created_at: string; author: string; indices: number }
@@ -31,19 +31,21 @@ function EditModal({ v, frozen, onClose, onSave }: { v: ViewRow; frozen: boolean
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const num = Number(value.replace(/\s/g, "").replace(",", ".").replace("−", "-"));
-  const preview = field === "forecast_price" ? num : v.row.basePrice * (1 + num / 100);
+  const contract = contractPrice(v.row);
+  // Рост — от цены договоров, как в таблице; на сервер уходит индекс к цене после пересчёта внутри года
+  const preview = field === "forecast_price" ? num : contract * (1 + num / 100);
   async function save() {
     if (!reason.trim()) return setError("Укажите причину правки — без неё изменение не сохранится");
     if (!Number.isFinite(num) || (field === "forecast_price" ? num <= 0 : num <= -100)) return setError("Проверьте значение");
     setBusy(true); setError(null);
-    try { await onSave(field, field === "forecast_price" ? num : 1 + num / 100, reason.trim()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
+    try { await onSave(field, field === "forecast_price" ? num : preview / v.row.basePrice, reason.trim()); } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(false); }
   }
   return (
     <Modal title="Правка строки" subtitle={`${v.row.subject} · ${v.row.okpd2} · ${v.row.regionName ?? v.row.region ?? ""}`} onClose={onClose}
       footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={busy} onClick={save}>{busy ? "Сохранение…" : "Сохранить"}</button></>}>
       <div className="flex gap-2">
         {([["forecast_price", "Прогнозная цена"], ["index_value", "Рост, %"]] as const).map(([k, l]) => (
-          <button key={k} type="button" onClick={() => { setField(k); setValue(k === "forecast_price" ? String(v.row.forecastPrice).replace(".", ",") : String(Math.round((v.row.forecastIndex - 1) * 1000) / 10).replace(".", ",")); }}
+          <button key={k} type="button" onClick={() => { setField(k); setValue(k === "forecast_price" ? String(v.row.forecastPrice).replace(".", ",") : String(v.growth).replace(".", ",")); }}
             className={`rounded-lg border px-3 py-1.5 text-sm ${field === k ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600"}`}>{l}</button>
         ))}
       </div>
@@ -51,7 +53,7 @@ function EditModal({ v, frozen, onClose, onSave }: { v: ViewRow; frozen: boolean
         <div><span className="field-label">Сейчас</span><p className="py-2 text-sm">{field === "forecast_price" ? fmtRub(v.row.forecastPrice) : fmtGrowth(v.growth)}</p></div>
         <div><label className="field-label" htmlFor="val">Новое значение</label><input id="val" autoFocus className="inp py-2" inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} /></div>
       </div>
-      {Number.isFinite(preview) && <p className="hint">Прогноз станет {fmtRub(Math.round(preview * 100) / 100)} (база {fmtRub(v.row.basePrice)})</p>}
+      {Number.isFinite(preview) && <p className="hint">Прогноз станет {fmtRub(Math.round(preview * 100) / 100)} (цена договоров {fmtRub(contract)})</p>}
       <div><label className="field-label" htmlFor="reason">Причина правки</label>
         <textarea id="reason" rows={2} className="inp py-2" placeholder="Например: уточнено по коммерческим предложениям" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
       {frozen && <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">Версия утверждена: правка сохранится в новой версии, утверждённая останется без изменений.</p>}

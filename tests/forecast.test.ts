@@ -48,7 +48,7 @@ const ref: Reference = {
 
 describe("разбор выгрузок", () => {
   it("находит колонки в многоуровневой шапке и нормализует коды", () => {
-    const g = parseGpz(gpzBuf, SEED.regions.map((r) => r.code));
+    const g = parseGpz(gpzBuf, SEED.regions);
     expect(g.rows).toHaveLength(5);
     expect(g.rows[0]).toMatchObject({ lot: "L-1", okpd2: "68.20.12.000", unit: "мес", quantity: 12, region: "40", ws: "WS90107" });
     const r = parseReport(repBuf);
@@ -58,7 +58,7 @@ describe("разбор выгрузок", () => {
 });
 
 describe("расчёт прогноза", () => {
-  const g = parseGpz(gpzBuf, SEED.regions.map((r) => r.code)).rows;
+  const g = parseGpz(gpzBuf, SEED.regions).rows;
   const r = parseReport(repBuf).rows;
   const res = buildForecast(g, r, ref, { baseYear: 2026, targetYear: 2027 });
 
@@ -189,7 +189,7 @@ describe("отчётность в формате выгрузки с нумер�
 describe("покрытие прогноза", () => {
   it("считает позиции по видам индекса и собирает коды ОКПД2 без отраслевого индекса", async () => {
     const { buildCoverage } = await import("@/lib/indexFormat");
-    const g = parseGpz(gpzBuf, SEED.regions.map((r) => r.code)).rows;
+    const g = parseGpz(gpzBuf, SEED.regions).rows;
     const res = buildForecast(g, parseReport(repBuf).rows, ref, { baseYear: 2026, targetYear: 2027 });
     const cov = buildCoverage(res.rows, 2027);
     expect(cov).toMatchObject({ total: 3, industry: 2, cpi: 1, none: 0, targetYear: 2027 });

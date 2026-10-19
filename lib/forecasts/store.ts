@@ -1,6 +1,6 @@
 import { ensureDemo, loadReference, sql } from "../db";
 import type { Reference } from "../types";
-import { aggregateForecast, groupKey, type ContractPoint, type ExcludedRow, type ForecastRow } from "../forecast";
+import { aggregateForecast, groupKey, packPoint, unpackPoint, type ContractPoint, type ExcludedRow, type ForecastRow, type PackedPoint } from "../forecast";
 import {
   CARD_COLORS, canTransition, fingerprint, hasNewIndices, indexSnapshot, isFrozen, mape, refFromSnapshot, statsOf,
   type ForecastStatus, type SnapshotIndex, type StoredItem, type VersionStats,
@@ -72,9 +72,15 @@ function itemRecords(rows: ForecastRow[]) {
     item_key: groupKey(r), okpd2: r.okpd2, subject: r.subject, category: r.category, method: r.method ?? null, region: r.region,
     unit: r.unit, contracts: r.contracts, base_price: r.basePrice, index_value: r.forecastIndex, index_source: r.indexSource || null,
     forecast_price: r.forecastPrice, needs_review: r.needsApproval, reviewed: false, manually_edited: false,
-    data: { ...r, points: undefined, pts: (r.points ?? []).map((p) => [p.raw, p.month]) },
+    data: { ...r, points: undefined, pts: (r.points ?? []).map(packPoint) },
   }));
 }
+
+/** Договоры сохранённых строк — для пересчёта по новым индексам */
+const pointsOf = (items: Record<string, any>[]): ContractPoint[] => items.flatMap((i) => ((i.data.pts ?? []) as PackedPoint[]).map((a) => ({
+  okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method,
+  subject: i.data.gpzNames?.[0] ?? "", ...unpackPoint(a), vat: i.data.vatRate ?? null,
+})));
 
 async function insertItems(versionId: number, rows: ForecastRow[]) {
   const recs = itemRecords(rows);
@@ -91,7 +97,14 @@ async function insertItems(versionId: number, rows: ForecastRow[]) {
 
 async function refreshStats(versionId: number, excluded?: number) {
   const db = sql();
-  const items = await db.query("SELECT base_price, forecast_price, contracts, needs_review, reviewed, manually_edited FROM forecast_items WHERE version_id = $1", [versionId]);
+  const raw = await db.query(
+    `SELECT COALESCE(NULLIF((data->>'rawMedian')::numeric, 0), base_price) AS contract, (data->>'baseSum')::numeric AS base_sum, (data->>'volume')::numeric AS volume,
+            forecast_price, contracts, needs_review, reviewed, manually_edited FROM forecast_items WHERE version_id = $1`, [versionId]);
+  // Есть суммы у всех позиций — рост по деньгам (как в отчёте), иначе по цене за единицу
+  const money = raw.length > 0 && raw.every((i) => i.base_sum != null && Number(i.volume) > 0);
+  const items = raw.map((i) => money
+    ? { ...i, base_price: Number(i.base_sum), forecast_price: (Number(i.base_sum) * Number(i.forecast_price)) / Number(i.contract) }
+    : { ...i, base_price: Number(i.contract) });
   const [v] = await db.query("SELECT stats FROM forecast_versions WHERE id = $1", [versionId]);
   const stats = statsOf(items as never, excluded ?? v?.stats?.excluded ?? 0);
   await db.query("UPDATE forecast_versions SET stats = $1 WHERE id = $2", [JSON.stringify(stats), versionId]);
@@ -122,7 +135,8 @@ export async function appendItems(forecastId: number, versionId: number, rows: F
   await insertItems(versionId, rows);
 }
 
-export async function finalizeUpload(forecastId: number, versionId: number, info: { gpzRows: number; excluded: number; excludedRows?: ExcludedRow[]; author: string }) {
+export async function finalizeUpload(forecastId: number, versionId: number, info: { gpzRows: number; excluded: number; excludedRows?: ExcludedRow[]; hash?: string; author: string }) {
+  if (info.hash && /^[0-9a-f]{64}$/.test(info.hash)) await sql().query("UPDATE forecast_versions SET files_hash = $1 WHERE id = $2", [info.hash, versionId]);
   if (info.excludedRows) await sql().query("UPDATE forecast_versions SET excluded_rows = $1 WHERE id = $2", [JSON.stringify(info.excludedRows.slice(0, 5000)), versionId]);
   const stats = await refreshStats(versionId, info.excluded);
   await log({ forecastId, versionId, type: "upload", newValue: `строк ГПЗ: ${info.gpzRows}, не вошли: ${info.excluded}`, author: info.author });
@@ -274,6 +288,14 @@ export async function newDataVersion(forecastId: number, year: number, baseYear:
   return newVersion(forecastId, "Загружены новые файлы ГПЗ и отчётности", author, [], snap);
 }
 
+/** Версии, загруженные из тех же файлов */
+export async function findByHash(hash: string) {
+  if (!/^[0-9a-f]{64}$/.test(hash)) return [];
+  return sql().query(
+    `SELECT f.id AS forecast_id, f.title, v.number, v.created_at FROM forecast_versions v JOIN forecasts f ON f.id = v.forecast_id
+      WHERE v.files_hash = $1 ORDER BY v.created_at DESC LIMIT 5`, [hash]);
+}
+
 /** Удаление прогноза со всеми версиями, строками, историей и фактом */
 export async function deleteForecast(forecastId: number) {
   await sql().query("DELETE FROM forecasts WHERE id = $1", [forecastId]);
@@ -300,9 +322,7 @@ export async function recalc(forecastId: number, author: string, why?: string) {
   const f = await forecastOf(forecastId);
   const ref = await loadReference();
   const items = await db.query("SELECT okpd2, unit, region, category, method, subject, data FROM forecast_items WHERE version_id = $1", [f.current_version_id]);
-  const points: ContractPoint[] = items.flatMap((i) => ((i.data.pts ?? []) as [number, number | null][]).map(([raw, month]) => ({
-    okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method, subject: i.subject, raw, month, vat: i.data.vatRate ?? null,
-  })));
+  const points = pointsOf(items);
   const rows = aggregateForecast(points, ref, { baseYear: f.base_year, targetYear: f.year });
   const snap = indexSnapshot(ref, f.year, f.base_year);
   const edited = (await db.query("SELECT count(*) AS n FROM forecast_items WHERE version_id = $1 AND manually_edited", [f.current_version_id]))[0].n;
@@ -318,9 +338,7 @@ export async function reproduce(versionId: number) {
   const [v] = await db.query("SELECT v.index_snapshot, f.year, f.base_year FROM forecast_versions v JOIN forecasts f ON f.id = v.forecast_id WHERE v.id = $1", [versionId]);
   const ref = refFromSnapshot(await loadReference(), v.index_snapshot);
   const items = await db.query("SELECT okpd2, unit, region, category, method, subject, data FROM forecast_items WHERE version_id = $1", [versionId]);
-  const points: ContractPoint[] = items.flatMap((i) => ((i.data.pts ?? []) as [number, number | null][]).map(([raw, month]) => ({
-    okpd2: i.okpd2, unit: i.unit, region: i.region, ws: i.data.ws ?? null, category: i.category, method: i.method, subject: i.subject, raw, month, vat: i.data.vatRate ?? null,
-  })));
+  const points = pointsOf(items);
   return aggregateForecast(points, ref, { baseYear: v.base_year, targetYear: v.year });
 }
 

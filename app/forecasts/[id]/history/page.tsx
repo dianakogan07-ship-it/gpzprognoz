@@ -7,6 +7,7 @@ import { MultiSelect } from "@/components/MultiSelect";
 import { fmtDateTime } from "@/lib/forecasts/client";
 import { EVENT_TITLE, FIELD_TITLE, STATUS_TITLE, type ForecastStatus, type VersionStats } from "@/lib/forecasts/model";
 import { fmtGrowth, fmtRub, matchesOkpd } from "@/lib/forecastView";
+import { okpdIn } from "@/lib/forecast";
 
 interface Version { id: number; number: number; status: ForecastStatus; comment: string | null; stats: VersionStats; author: string; created_at: string }
 interface Event { id: number; version: number | null; okpd2: string | null; subject: string | null; event_type: string; field: string | null; old_value: string | null; new_value: string | null; reason: string | null; author: string; created_at: string }
@@ -34,7 +35,7 @@ export default function HistoryPage({ params }: { params: { id: string } }) {
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
 
-  const events = useMemo(() => (data?.events ?? []).filter((e) => (!types.length || types.includes(e.event_type)) && (!okpd.trim() || (e.okpd2 != null && matchesOkpd(e.okpd2, okpd)))), [data, types, okpd]);
+  const events = useMemo(() => (data?.events ?? []).filter((e) => (!types.length || types.includes(e.event_type)) && (!okpd.trim() || (e.okpd2 != null && (matchesOkpd(e.okpd2, okpd) || okpdIn(e.okpd2, okpd.trim().replace(/,/g, ".")) || okpdIn(okpd.trim().replace(/,/g, "."), e.okpd2))))), [data, types, okpd]);
   if (error) return <p className="text-sm text-red-600">{error}</p>;
   if (!data) return <p className="hint">Загрузка…</p>;
   const typeCounts = new Map<string, number>();
@@ -83,7 +84,13 @@ export default function HistoryPage({ params }: { params: { id: string } }) {
                 {e.reason && <p className="text-slate-600">Причина: {e.reason}</p>}
               </li>
             ))}
-            {!events.length && <li className="py-8 text-center text-slate-500">Нет событий по выбранным фильтрам</li>}
+            {!events.length && (
+              <li className="space-y-2 py-8 text-center text-slate-500">
+                <p>Нет событий по выбранным фильтрам</p>
+                {okpd.trim() && <p className="text-sm">В истории — только изменения прогноза: правки цен, проверки, загрузки. По коду {okpd.trim()} их не было.{" "}
+                  <Link className="text-brand hover:underline" href={`/forecasts/${id}?okpd=${encodeURIComponent(okpd.trim())}`}>Договоры по этому коду — в таблице прогноза →</Link></p>}
+              </li>
+            )}
           </ul>
         </div>
       </div>

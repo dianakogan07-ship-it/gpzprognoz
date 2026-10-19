@@ -49,6 +49,10 @@ export function RosstatImportButton({ reference, baseYear, onDone, disabled }: {
         const r = await api("/api/indices/rosstat", "POST", { rows: rows.slice(i, i + CHUNK) });
         inserted += r.inserted; updated += r.updated;
       }
+      // Названия групп ОКПД2 (19.2, 24.4 …) — в справочник, чтобы у индексов были подписи
+      const names = new Map<string, string>();
+      for (const p of parsed) for (const x of p.series) if (x.key.includes(".") && x.name) names.set(x.key, x.name.replace(/\s+/g, " ").trim());
+      if (names.size) await api("/api/dict/okpd2/bulk", "POST", { rows: [...names].map(([code, name]) => ({ code, name })) }).catch(() => null);
       const what = parsed.map((p) => ROSSTAT_KIND_TITLE[p.kind].toLowerCase()).join(", ");
       setParsed(null);
       onDone(`Индексы Росстата загружены (${what}): добавлено ${inserted}, обновлено ${updated}. Все значения ждут проверки.`);

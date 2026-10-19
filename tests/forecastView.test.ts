@@ -11,10 +11,10 @@ const base: ForecastRow = {
   okpd2: "28.99", okpd2Name: "Оборудование", category: "МТР", ws: null, subject: "Установка", unit: "шт", unitLabel: "шт",
   region: "40", regionName: "г. Санкт-Петербург", contracts: 5, outliers: 0, minPrice: 90, maxPrice: 110, basePrice: 100,
   forecastIndex: 1.08, indexLevel: "okpd2", indexSource: "МЭР", indexSourceUrl: "", forecastPrice: 108,
-  prices: [90, 100, 110], rawMedian: 100, outlierPrices: [], toDecember: "applied", indexKey: "28", indexApproved: true,
+  prices: [90, 100, 110], rawMedian: 0, outlierPrices: [], toDecember: "applied", indexKey: "28", indexApproved: true,
   indexSourceCode: "MER_FORECAST", repeatable: true, needsApproval: false, smallSample: false, flags: [], comment: "",
 };
-const row = (p: Partial<ForecastRow>): ForecastRow => ({ ...base, ...p });
+const row = (p: Partial<ForecastRow>): ForecastRow => ({ ...base, ...(p.forecastIndex && p.forecastPrice == null ? { forecastPrice: (p.basePrice ?? base.basePrice) * p.forecastIndex } : {}), ...p });
 const F = (p: Partial<Filters>): Filters => ({ ...EMPTY_FILTERS, ...p });
 
 describe("статус позиции", () => {

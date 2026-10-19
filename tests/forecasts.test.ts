@@ -26,7 +26,7 @@ describe("агрегаты версии", () => {
       { base_price: 100, forecast_price: 104, contracts: 1, needs_review: true, reviewed: false, manually_edited: true },
       { base_price: 200, forecast_price: 210, contracts: 2, needs_review: false, reviewed: false, manually_edited: false },
     ], 5);
-    expect(s).toEqual({ items: 3, contracts: 6, baseSum: 400, forecastSum: 424, growth: 6, needsReview: 2, reviewed: 1, edits: 1, excluded: 5 });
+    expect(s).toEqual({ items: 3, contracts: 6, baseSum: 400, forecastSum: 424, growth: 6, needsReview: 2, reviewed: 1, edits: 1, excluded: 5, growthBase: "contract" });
   });
   it("точность по факту", () => {
     expect(mape([{ forecast: 110, actual: 100 }, { forecast: 90, actual: 100 }])).toBe(10);

@@ -1,8 +1,7 @@
-import { aggregateForecast, findIndex, okvedSection } from "./forecast";
+import { DEFAULT_VAT, aggregateForecast, findIndex, okvedSection } from "./forecast";
 import { isActiveIndex, type PriceIndex, type Reference, type Source } from "./types";
 
-/** Ставка НДС по умолчанию, если в файлах её нет */
-export const DEFAULT_VAT = 0.22;
+export { DEFAULT_VAT };
 
 /**
  * Последний месяц, до которого Росстат опубликовал данные за год:

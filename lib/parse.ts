@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { normKey, normOkpd2, normRegion, normUnit, normWs, parseVatRate, toDate, toNumber } from "./normalize";
+import { normKey, normOkpd2, normUnit, resolveRegion, normWs, parseVatRate, toDate, toNumber } from "./normalize";
 
 export interface GpzRow {
   row: number;
@@ -18,6 +18,15 @@ export interface GpzRow {
   ws: string | null;
   /** Ставка НДС, доля: 0.22 */
   vatRate: number | null;
+  /** Наименование региона рядом с кодом ОКАТО */
+  regionName: string | null;
+  /** Ошибка кода ОКАТО: кода нет в справочнике или он не совпадает с названием региона */
+  regionError: string | null;
+  /** Срок начала работ и срок исполнения договора по плану */
+  workStart: Date | null;
+  workEnd: Date | null;
+  /** Квартал проведения закупки по плану, 1–4 */
+  quarter: number | null;
 }
 export interface ReportRow {
   row: number;
@@ -29,10 +38,15 @@ export interface ReportRow {
   contractDate: Date | null;
   ws: string | null;
   vatRate: number | null;
+  /** Дата окончания действия договора */
+  endDate: Date | null;
+  /** Предложение победителя без НДС — для сравнения с суммой договора после допсоглашений */
+  offerNoVat: number | null;
+  comment: string | null;
 }
 
 type Matcher = RegExp[];
-const GPZ_COLS: Record<keyof Omit<GpzRow, "row">, Matcher> = {
+const GPZ_COLS: Record<keyof Omit<GpzRow, "row" | "regionError">, Matcher> = {
   lot: [/реестров\S*\s+номер\s+лот/i, /номер\s+лота/i],
   procId: [/id\s*процедур/i, /идентификатор\s+процедур/i],
   subject: [/предмет/i, /наименовани\S*\s+(закупк|лот|договор)/i],
@@ -45,6 +59,10 @@ const GPZ_COLS: Record<keyof Omit<GpzRow, "row">, Matcher> = {
   method: [/способ\S*\s+закупк/i, /^способ/i],
   ws: [/\bws\b/i, /код\s*ws/i, /код\s+услуг/i, /услуг\S* \/ код$/i],
   vatRate: [/ставк\S*\s*ндс/i, /^ндс,?\s*%?$/i],
+  regionName: [/регион.*\/\s*наименовани/i, /наименовани\S*\s+окато/i],
+  workStart: [/срок\S*\s+начал/i],
+  workEnd: [/срок\S*\s+исполнени/i],
+  quarter: [/^квартал/i],
 };
 const REPORT_COLS: Record<string, Matcher> = {
   lot: GPZ_COLS.lot,
@@ -64,6 +82,9 @@ const REPORT_COLS: Record<string, Matcher> = {
   quantity: GPZ_COLS.quantity,
   contractDate: [/дат\S*\s+(заключ|подпис)/i, /дат\S*\s+договор/i],
   ws: GPZ_COLS.ws,
+  endDate: [/дат\S*\s+окончани/i, /срок\S*\s+(действи|исполнени)/i],
+  offerNoVat: [/(стоимост|цен)\S*\s+предложени\S*.*без\s*ндс/i],
+  comment: [/коммент/i, /примечани/i],
 };
 
 const PRICE_EXCLUDE = [/начальн/i, /максимальн/i, /\bнмц/i, /валют/i, /эконом/i, /эффективн/i];
@@ -73,6 +94,8 @@ const EXCLUDE: Record<string, RegExp[]> = {
   subject: [/окпд/i],
   quantity: [/заяв/i, /участник/i, /предложени/i],
   status: [/договорн/i],
+  offerNoVat: [/валют/i],
+  regionName: [/код/i],
 };
 
 const isNumberingRow = (row: unknown[], width: number) =>
@@ -146,7 +169,7 @@ export function mapColumns(headers: string[], kind: "gpz" | "report") {
 const cell = (r: unknown[], i: number) => (i >= 0 ? r[i] ?? null : null);
 const str = (v: unknown) => (v == null ? null : String(v).trim() || null);
 
-export function parseGpz(buf: ArrayBuffer, regionCodes: string[]) {
+export function parseGpz(buf: ArrayBuffer, regions: { code: string; name: string }[]) {
   const { headers, rows, firstDataRow } = readSheet(buf);
   const c = mapColumns(headers, "gpz");
   const missing = (["okpd2", "quantity"] as const).filter((k) => c[k] < 0);
@@ -165,7 +188,11 @@ export function parseGpz(buf: ArrayBuffer, regionCodes: string[]) {
       unitName: normUnit(cell(r, c.unitName)),
       method: str(cell(r, c.method)),
       quantity: toNumber(cell(r, c.quantity)),
-      region: normRegion(cell(r, c.region), regionCodes),
+      ...((x) => ({ region: x.code, regionError: x.error }))(resolveRegion(cell(r, c.region), str(cell(r, c.regionName)), regions)),
+      regionName: str(cell(r, c.regionName)),
+      workStart: toDate(cell(r, c.workStart)),
+      workEnd: toDate(cell(r, c.workEnd)),
+      quarter: ((q) => (q != null && q >= 1 && q <= 4 ? Math.round(q) : null))(toNumber(cell(r, c.quarter))),
       category: str(cell(r, c.category)),
       ws: normWs(cell(r, c.ws)),
       vatRate: parseVatRate(cell(r, c.vatRate)),
@@ -200,6 +227,9 @@ export function parseReport(buf: ArrayBuffer) {
       contractDate: toDate(cell(r, c.contractDate)),
       ws: normWs(cell(r, c.ws)),
       vatRate: parseVatRate(cell(r, c.vatRate)),
+      endDate: toDate(cell(r, c.endDate)),
+      offerNoVat: toNumber(cell(r, c.offerNoVat)),
+      comment: str(cell(r, c.comment)),
     });
   });
   return { rows: out, headers, columns: c };

@@ -32,19 +32,36 @@ export const fmtDateTime = (s: string) => new Date(s).toLocaleString("ru-RU", { 
 
 const CHUNK = 300;
 
-/** Договоры в строке — только цена и месяц: этого достаточно для пересчёта */
-const slim = (r: ForecastRow) => ({ ...r, points: (r.points ?? []).map((p) => ({ raw: p.raw, month: p.month })) });
+/** Договоры в строке — только цена, дата, количество и отметки: этого достаточно для пересчёта, без сведений о заказчике */
+const slim = (r: ForecastRow) => ({ ...r, points: (r.points ?? []).map(({ raw, month, year, qty, months, ds, active, gpzMonths, quarter, vatFile }) => ({ raw, month, year, qty, months, ds, active, gpzMonths, quarter, vatFile })) });
+
+/** Отпечаток пары файлов: по нему узнаём повторную загрузку тех же файлов. Сами файлы на сервер не уходят */
+async function filesHash(a: ArrayBuffer, b: ArrayBuffer) {
+  const hex = async (x: ArrayBuffer) => [...new Uint8Array(await crypto.subtle.digest("SHA-256", x))].map((n) => n.toString(16).padStart(2, "0")).join("");
+  return hex(new TextEncoder().encode(`${await hex(a)}:${await hex(b)}`).buffer as ArrayBuffer);
+}
 
 /** Чтение ГПЗ и отчётности в браузере и расчёт прогноза. Файлы на сервер не уходят */
-export async function calcFromFiles(gpz: File, rep: File, reference: Reference, year: number, baseYear: number) {
-  const g = parseGpz(await gpz.arrayBuffer(), reference.regions.map((r) => r.code));
-  const r = parseReport(await rep.arrayBuffer());
-  const result = buildForecast(g.rows, r.rows, reference, { baseYear, targetYear: year });
+export async function calcFromFiles(gpz: File, rep: File, reference: Reference, year: number, baseYear: number, opts: { trustVat?: boolean } = {}) {
+  const gb = await gpz.arrayBuffer(), rb = await rep.arrayBuffer();
+  const g = parseGpz(gb, reference.regions);
+  const r = parseReport(rb);
+  const result = buildForecast(g.rows, r.rows, reference, { baseYear, targetYear: year, trustVat: opts.trustVat });
   if (!result.rows.length) throw new Error(`Ни одна строка не вошла в расчёт (не вошли: ${result.excluded.length}). Проверьте, что выбраны ГПЗ и отчётность одного года.`);
   try { localStorage.setItem(COVERAGE_KEY, JSON.stringify(buildCoverage(result.rows, year))); } catch { /* недоступно */ }
   if (result.newWsCodes.length) await api("/api/ws/auto", "POST", { codes: result.newWsCodes }).catch(() => null);
-  return { result, gpzRows: g.rows.length };
+  return { result, gpzRows: g.rows.length, hash: await filesHash(gb, rb), baseYear };
 }
+
+export interface Dupe { forecast_id: number; title: string; number: number; created_at: string }
+/** Что показать пользователю перед сохранением: те же файлы уже загружены, договоры следующего года, ставки НДС не 22 % */
+export async function uploadIssues(calc: Awaited<ReturnType<typeof calcFromFiles>>) {
+  const dupes = ((await api(`/api/forecasts/dupes?hash=${calc.hash}`, "GET").catch(() => [])) ?? []) as Dupe[];
+  const { laterYear = 0, vatOther = {} } = calc.result.stats;
+  const any = dupes.length > 0 || laterYear > 0 || Object.keys(vatOther).length > 0;
+  return { dupes, laterYear, vatOther, baseYear: calc.baseYear, any };
+}
+export type UploadIssues = Awaited<ReturnType<typeof uploadIssues>>;
 
 /** Сохранение обезличенных строк в версию частями и подсчёт итогов */
 export async function saveRows(forecastId: number, versionId: number, calc: Awaited<ReturnType<typeof calcFromFiles>>, onStep: (s: string) => void) {
@@ -53,5 +70,5 @@ export async function saveRows(forecastId: number, versionId: number, calc: Awai
     onStep(`Сохранение строк: ${Math.min(i + CHUNK, rows.length)} из ${rows.length}…`);
     await api(`/api/forecasts/${forecastId}/items`, "POST", { versionId, rows: rows.slice(i, i + CHUNK).map(slim) });
   }
-  await api(`/api/forecasts/${forecastId}/finalize`, "POST", { versionId, gpzRows: calc.gpzRows, excluded: calc.result.excluded.length, excludedRows: calc.result.excluded });
+  await api(`/api/forecasts/${forecastId}/finalize`, "POST", { versionId, gpzRows: calc.gpzRows, excluded: calc.result.excluded.length, excludedRows: calc.result.excluded, hash: calc.hash });
 }

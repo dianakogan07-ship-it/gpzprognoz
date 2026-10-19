@@ -4,7 +4,8 @@ import { Breadcrumbs } from "@/components/Breadcrumbs";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { api, useReference } from "@/components/useReference";
-import { calcFromFiles, saveRows } from "@/lib/forecasts/client";
+import { calcFromFiles, saveRows, uploadIssues, type UploadIssues } from "@/lib/forecasts/client";
+import { UploadReview } from "@/components/UploadReview";
 import { FilePick } from "@/components/FilePick";
 import { IconPlay } from "@/components/Icons";
 
@@ -19,13 +20,20 @@ export default function NewForecastPage() {
   const [rep, setRep] = useState<File | null>(null);
   const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<UploadIssues | null>(null);
+  const [trustVat, setTrustVat] = useState(false);
 
   async function run() {
     if (!gpz || !rep || !reference) return;
     setError(null);
     try {
       setStep("Чтение файлов и расчёт…");
-      const calc = await calcFromFiles(gpz, rep, reference, year, baseYear);
+      let calc = await calcFromFiles(gpz, rep, reference, year, baseYear);
+      // Сначала показываем, что нужно подтвердить; второе нажатие — сохранение
+      if (!issues) {
+        const found = await uploadIssues(calc);
+        if (found.any) { setIssues(found); setStep(null); return; }
+      } else if (trustVat) calc = await calcFromFiles(gpz, rep, reference, year, baseYear, { trustVat: true });
       setStep("Сохранение прогноза…");
       const { id, versionId } = await api("/api/forecasts", "POST", { title: title.trim() || `Прогноз ${year}`, year, baseYear });
       await saveRows(id, versionId, calc, setStep);
@@ -51,11 +59,15 @@ export default function NewForecastPage() {
             <input id="b" type="number" className="inp py-2" value={baseYear} onChange={(e) => setBaseYear(Number(e.target.value))} /></div>
         </div>
         <div className="grid gap-4 sm:grid-cols-2">
-          <div><span className="field-label">ГПЗ {baseYear}</span><FilePick label="Выберите файл ГПЗ .xlsx" hint="Выгрузка годового плана закупок" file={gpz} onChange={setGpz} /></div>
-          <div><span className="field-label">Отчётность {baseYear}</span><FilePick label="Выберите файл отчётности .xlsx" hint="Выгрузка заключённых договоров" file={rep} onChange={setRep} /></div>
+          <div><span className="field-label">ГПЗ {baseYear}</span><FilePick label="Выберите файл ГПЗ .xlsx" hint="Выгрузка годового плана закупок" file={gpz} onChange={(f) => { setGpz(f); setIssues(null); }} /></div>
+          <div><span className="field-label">Отчётность {baseYear}</span><FilePick label="Выберите файл отчётности .xlsx" hint="Выгрузка заключённых договоров" file={rep} onChange={(f) => { setRep(f); setIssues(null); }} /></div>
         </div>
         <p className="hint">В сервисе сохраняются только обезличенные цены по предметам закупки — без заказчиков и контрагентов.</p>
-        <button className="btn" disabled={!gpz || !rep || !reference || !db || !!step} onClick={run}><IconPlay width={16} height={16} />{step ?? "Рассчитать и сохранить"}</button>
+        {issues && <UploadReview newForecast issues={issues} trustVat={trustVat} setTrustVat={setTrustVat} />}
+        <div className="flex flex-wrap gap-2">
+          <button className="btn" disabled={!gpz || !rep || !reference || !db || !!step} onClick={run}><IconPlay width={16} height={16} />{step ?? (issues ? (issues.dupes.length ? "Всё равно создать" : "Сохранить") : "Рассчитать и сохранить")}</button>
+          {issues && !step && <button className="btn-sec" onClick={() => setIssues(null)}>Отмена</button>}
+        </div>
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>
     </div>
