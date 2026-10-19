@@ -369,6 +369,9 @@ export default function IndicesPage() {
     setBusy(true);
     try {
       await api("/api/indices/approve", "POST", { ids });
+      // Включён фильтр «ждут проверки» и на вкладке больше нечего проверять — показываем все, иначе утверждённые «пропадают»
+      const left = rows.filter((r) => !r.approved && !ids.includes(r.id));
+      if (onlyPending && !left.length) setOnlyPending(false);
       setMsg(ids.length === 1 ? "Индекс утверждён" : `Утверждено индексов: ${ids.length}`);
       setSelected(new Set());
       await reload();
@@ -485,7 +488,7 @@ export default function IndicesPage() {
             }
           }} className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition ${onlyPending ? "bg-amber-100 text-amber-900 ring-amber-300" : "bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100"}`}>
             {pendingTotal} {plural(pendingTotal, "индекс ждёт", "индекса ждут", "индексов ждут")} проверки
-            <span className="text-xs font-normal">{onlyPending ? "· показать все" : "· показать"}</span>
+            <span className="text-xs font-normal">{onlyPending ? "· сейчас показаны только они, показать все" : "· показать"}</span>
           </button>
         )}
 
@@ -514,7 +517,7 @@ export default function IndicesPage() {
                 {l} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === (c ? consKind(tabKind as ScenarioKind) : tabKind) && (!onlyPending || !i.approved)).length}</span>
               </button>
             ))}
-            <span className="hint">{cons ? "Прогноз считается по базовому; консервативный показан вторым вариантом — в карточке позиции и в отчёте." : "По базовому сценарию считается прогноз."}</span>
+            <span className="hint max-w-3xl">Минэкономразвития публикует два варианта прогноза. <b>Базовый</b> — основной, самый вероятный: по нему считается прогноз цен. <b>Консервативный</b> — на случай, если экономика пойдёт хуже (слабее рубль, выше инфляция); показывается вторым вариантом в карточке позиции и в отчёте, чтобы был виден запас.</span>
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
