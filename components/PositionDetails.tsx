@@ -24,9 +24,9 @@ export function PositionDetails({ itemId, baseYear }: { itemId: number; baseYear
   const th = "whitespace-nowrap px-2 py-1.5 text-left text-[11px] font-medium uppercase text-slate-500";
   const td = "border-t border-slate-100 px-2 py-1.5 align-top";
   return (
-    <div className="space-y-4">
-      <div>
-        <p className="text-sm font-semibold text-slate-900">Договоры в основе расчёта ({pts.length})</p>
+    <div className="space-y-3">
+      <details className="group">
+        <summary className="cursor-pointer select-none text-sm font-semibold text-slate-900 hover:text-indigo-700">Договоры в основе расчёта ({pts.length})</summary>
         {!pts.length ? <p className="hint">Список договоров сохраняется при загрузке файлов — у этой версии его нет.</p> : (
           <>
             {!pts.some((p) => p.lot) && <p className="hint">Номера лотов и даты сохраняются только для прогнозов, загруженных заново.</p>}
@@ -58,9 +58,9 @@ export function PositionDetails({ itemId, baseYear }: { itemId: number; baseYear
             <p className="mt-1 text-[11px] text-slate-500">Серым — договоры, не вошедшие в медиану (цена отличается больше чем в 2 раза). Если договор заходит на следующий год, месяцы после {baseYear} года считаются по новой цене: цена {baseYear} = сумма / (месяцы {baseYear} + месяцы позже × (1 + рост цен)).</p>
           </>
         )}
-      </div>
-      <div>
-        <p className="text-sm font-semibold text-slate-900">История позиции по версиям</p>
+      </details>
+      <details className="group">
+        <summary className="cursor-pointer select-none text-sm font-semibold text-slate-900 hover:text-indigo-700">История позиции по версиям</summary>
         <div className="mt-1 overflow-x-auto rounded-lg border border-slate-200">
           <table className="w-full text-xs">
             <thead className="bg-slate-50"><tr><th className={th}>Версия</th><th className={th}>Что произошло</th><th className={`${th} text-right`}>Договоров</th><th className={`${th} text-right`}>Цена договоров</th><th className={`${th} text-right`}>Прогноз</th><th className={`${th} text-right`}>Рост</th></tr></thead>
@@ -86,7 +86,7 @@ export function PositionDetails({ itemId, baseYear }: { itemId: number; baseYear
         )}
         {d.history.length <= 1 && !d.edits.length && <p className="mt-1 hint">Позиция есть только в этой версии, правок не было.</p>}
         <p className="mt-1 text-[11px] text-slate-500">{d.history.length} {plural(d.history.length, "версия", "версии", "версий")} прогноза.</p>
-      </div>
+      </details>
     </div>
   );
 }
