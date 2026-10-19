@@ -2,6 +2,7 @@ import { neon } from "@neondatabase/serverless";
 import { SEED } from "./seed";
 import type { Reference } from "./types";
 import { MIGRATIONS_SQL, SCHEMA_SQL } from "./schema";
+import { formatGrowth } from "./indexFormat";
 
 export const hasDb = () => Boolean(process.env.DATABASE_URL);
 
@@ -142,6 +143,23 @@ export async function upsertRows(t: TableName, rows: Record<string, unknown>[]) 
     const { cols, vals } = pick(t, row);
     if (!cols.length) continue;
     const ph = cols.map((_, i) => `$${i + 1}`).join(", ");
+    if (t === "price_indices") {
+      // Утверждённый индекс с другим значением не перезаписываем: новое значение — версией на проверку, прежнее остаётся в истории
+      const r = row as { kind: string; key?: string | null; year: number; month?: number | null; value: number };
+      const [cur] = await db.query(
+        `SELECT id, value, approved FROM price_indices WHERE kind = $1 AND COALESCE(key, '') = $2 AND year = $3 AND COALESCE(month, 0) = $4 AND pending_of IS NULL AND superseded_at IS NULL`,
+        [r.kind, r.key ?? "", r.year, r.month ?? 0]);
+      if (cur?.approved && Math.abs(Number(cur.value) - Number(r.value)) > 0.000005) {
+        const vcols = cols.filter((c) => c !== "approved");
+        const vvals = vcols.map((c) => vals[cols.indexOf(c)]);
+        const [pend] = await db.query("SELECT id FROM price_indices WHERE pending_of = $1", [cur.id]);
+        const note = `Утверждено ${formatGrowth(Number(cur.value))}, новое значение ${formatGrowth(Number(r.value))}`;
+        if (pend) await db.query(`UPDATE price_indices SET ${vcols.map((c, i) => `${c} = $${i + 1}`).join(", ")}, approved = FALSE, change_note = $${vcols.length + 1}, loaded_at = now() WHERE id = $${vcols.length + 2}`, [...vvals, note, pend.id]);
+        else await db.query(`INSERT INTO price_indices (${vcols.join(", ")}, approved, pending_of, change_note, loaded_at) VALUES (${vcols.map((_, i) => `$${i + 1}`).join(", ")}, FALSE, $${vcols.length + 1}, $${vcols.length + 2}, now())`, [...vvals, cur.id, note]);
+        updated++;
+        continue;
+      }
+    }
     const natural = def.pk !== "id" && cols.includes(def.pk);
     const conflict = t === "price_indices"
       ? ` ON CONFLICT (kind, COALESCE(key, ''), year, COALESCE(month, 0)) WHERE pending_of IS NULL AND superseded_at IS NULL DO UPDATE SET ${cols.map((c) => `${c} = EXCLUDED.${c}`).join(", ")}, loaded_at = now()`

@@ -9,6 +9,8 @@ import { IconPlus } from "@/components/Icons";
 import { exportVersion } from "@/lib/forecasts/client";
 import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
 import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
+import { DataRefresh } from "@/components/DataRefresh";
+import { staleness, type Stale } from "@/lib/freshness";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { plural } from "@/lib/forecastView";
 
@@ -18,7 +20,7 @@ const NBSP = "\u00a0";
 const numRu = (n: number, d = 0) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, NBSP);
 const pctSigned = (g: number) => `${g < 0 ? "−" : "+"}${numRu(Math.abs(g), 1)}${NBSP}%`;
 
-function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a: string) => void }) {
+function Card({ c, onAction, stale }: { c: ForecastCard; onAction: (c: ForecastCard, a: string) => void; stale: Stale[] }) {
   const router = useRouter();
   const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
   const archived = c.status === "archived";
@@ -44,6 +46,13 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-4 px-5 py-4">
+        {stale.length > 0 && (
+          <button className="flex items-start gap-2 self-stretch rounded-md bg-amber-50 px-3 py-2 text-left text-xs text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100"
+            onClick={(e) => { e.stopPropagation(); onAction(c, "refresh"); }}>
+            <span aria-hidden>⏰</span>
+            <span><b>Данные устарели — обновить</b><span className="block text-amber-800">{stale.map((x) => x.title).join(", ")}</span></span>
+          </button>
+        )}
         {c.newIndices && (
           <button className="self-start rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
             onClick={(e) => { e.stopPropagation(); onAction(c, "recalc"); }}>Новые индексы — пересчитать?</button>
@@ -78,7 +87,8 @@ function Tile({ value, label, note, tone, href, title }: { value: string; label:
 
 export default function ForecastsPage() {
   const router = useRouter();
-  const { reference, db } = useReference();
+  const { reference, db, reload } = useReference();
+  const [refreshFor, setRefreshFor] = useState<ForecastCard | null>(null);
   const [cards, setCards] = useState<ForecastCard[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"active" | "archive">("active");
@@ -113,6 +123,7 @@ export default function ForecastsPage() {
       if (a === "compare") router.push(`/forecasts/${c.id}/compare`);
       if (a === "version") setVersionFor(c);
       if (a === "edit") setEditing({ c, files: false });
+      if (a === "refresh") setRefreshFor(c);
       if (a === "files") setEditing({ c, files: true });
       if (a === "delete" && confirm(`Удалить прогноз «${c.title}» со всеми версиями и историей? Восстановить его будет нельзя.`)) {
         await api(`/api/forecasts/${c.id}`, "DELETE"); setMsg(`Прогноз «${c.title}» удалён`); await load();
@@ -165,9 +176,14 @@ export default function ForecastsPage() {
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {shown.map((c) => <Card key={c.id} c={c} onAction={onAction} />)}
+        {shown.map((c) => <Card key={c.id} c={c} onAction={onAction} stale={c.status === "archived" || !reference ? [] : staleness(reference.indices, c.year, c.base_year)} />)}
       </div>
 
+      {refreshFor && reference && (
+        <DataRefresh reference={reference} year={refreshFor.year} baseYear={refreshFor.base_year} onClose={() => setRefreshFor(null)}
+          stale={staleness(reference.indices, refreshFor.year, refreshFor.base_year)}
+          onDone={async () => { await reload(); await load(); }} />
+      )}
       {editing && reference && (
         <EditCard c={editing.c} reference={reference} focusFiles={editing.files} onClose={() => setEditing(null)}
           onSaved={async (m) => { setEditing(null); if (m) setMsg(m); await load(); }} />

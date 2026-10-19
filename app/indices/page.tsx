@@ -215,7 +215,10 @@ export default function IndicesPage() {
   useEffect(() => {
     try { const raw = localStorage.getItem(COVERAGE_KEY); if (raw) setCoverage(JSON.parse(raw)); } catch { /* недоступно */ }
   }, []);
-  const target = coverage?.targetYear ?? new Date().getFullYear() + 1;
+  // Год прогноза — общий для всех вкладок и загрузок; индексы прошлых лет остаются в архиве
+  const thisTarget = new Date().getFullYear() + 1;
+  const [targetSel, setTargetSel] = useState<number | null>(null);
+  const target = targetSel ?? coverage?.targetYear ?? thisTarget;
   const tabs = tabsFor(target);
   const [tabKind, setTabKind] = useState<IndexKind>("forecast");
   useEffect(() => {
@@ -245,15 +248,11 @@ export default function IndicesPage() {
   const activeIndices = useMemo(() => indices.filter(isActiveIndex), [indices]);
   const pendingTotal = indices.filter((i) => !i.approved).length;
   // Индексы разных лет не смешиваем: по умолчанию — год текущего расчёта
-  const [yearSel, setYearSel] = useState<number | null>(null);
   const defYear = (k: IndexKind) => (k === "to_december" ? target - 1 : target);
-  const yearsOf = (k: IndexKind) => [...new Set(indices.filter((i) => i.kind === k).map((i) => i.year))].sort((a, b) => b - a);
-  const years = yearsOf(kind);
-  const yearOf = (k: IndexKind, sel: number | null) => {
-    const ys = yearsOf(k);
-    return sel != null && ys.includes(sel) ? sel : ys.includes(defYear(k)) ? defYear(k) : ys[0] ?? defYear(k);
-  };
-  const year = yearOf(kind, yearSel);
+  // Годы прогноза, по которым есть индексы (пересчёт по месяцам относится к году базы — прогноз на следующий)
+  const targetYears = [...new Set([thisTarget, target, ...indices.map((i) => (i.kind === "to_december" ? i.year + 1 : i.year))])].sort((a, b) => b - a);
+  const yearOf = (k: IndexKind, _sel: number | null) => defYear(k);
+  const year = defYear(kind);
   const lastMonth = lastDataMonth(indices, year);
   const rows = indices
     .filter((i) => i.kind === kind && i.year === year && (!onlyPending || !i.approved))
@@ -346,6 +345,14 @@ export default function IndicesPage() {
                     </td>
                     <td className="max-w-xs text-xs text-slate-600">
                       {ix.note && <p>{ix.note}</p>}
+                      {(() => {
+                        // Прежние утверждённые значения того же индекса — чтобы было видно, откуда изменения
+                        const old = (reference?.indices ?? []).filter((o) => o.superseded_at && o.kind === ix.kind && (o.key ?? null) === (ix.key ?? null) && o.year === ix.year && (o.month ?? null) === (ix.month ?? null))
+                          .sort((a, b) => Date.parse(b.superseded_at!) - Date.parse(a.superseded_at!));
+                        return old.length > 0 && (
+                          <p className="mt-1 text-slate-500">Прежние значения: {old.map((o) => `${formatGrowth(o.value)} (действовало до ${new Date(o.superseded_at!).toLocaleDateString("ru-RU")}${o.doc_title ? `, ${o.doc_title}` : ""})`).join("; ")}</p>
+                        );
+                      })()}
                       {ix.doc_title && <p title={ix.raw_line ?? undefined} className="cursor-help">
                         {ix.indicator === "icp" ? "ИЦП" : ix.indicator === "deflator" ? "Дефлятор" : ""}{ix.indicator ? " · " : ""}
                         {ix.doc_title}{ix.doc_date ? `, одобрен ${ix.doc_date}` : ""}{ix.doc_page ? `, ${ix.doc_page}` : ""}
@@ -497,6 +504,18 @@ export default function IndicesPage() {
 
 
       <div className="card space-y-4">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-medium text-slate-900">Год прогноза:</span>
+          {targetYears.map((y) => (
+            <button key={y} type="button" onClick={() => setTargetSel(y)}
+              className={`rounded-lg border px-3 py-1 ${y === target ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+              {y}{y < thisTarget && <span className="ml-1 text-xs text-slate-400">архив</span>}
+            </button>
+          ))}
+          <span className="hint">{target < thisTarget
+            ? `Архив: индексы, по которым считался прогноз на ${target}. Они не меняются при загрузке данных на новые годы.`
+            : `Индексы на ${target} год и пересчёт по месяцам за ${target - 1}. Загрузки выше сохраняются в этот год.`}</span>
+        </div>
         {pendingTotal > 0 && (
           <button onClick={() => {
             const next = !onlyPending; setOnlyPending(next);
@@ -516,7 +535,7 @@ export default function IndicesPage() {
             // По месяцам считаем отрасли, а не строки
             const n = t.kind === "to_december" ? new Set(list.map((i) => i.key)).size : list.length;
             return (
-              <button key={t.kind} onClick={() => { setTabKind(t.kind); setYearSel(null); }}
+              <button key={t.kind} onClick={() => { setTabKind(t.kind); }}
                 className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${t.kind === tabKind ? "border-brand text-brand" : "border-transparent text-slate-500 hover:text-slate-800"}`}>
                 {t.title}
                 {t.extra && <span className="ml-2 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-normal text-slate-500">доп. настройка</span>}
@@ -530,9 +549,9 @@ export default function IndicesPage() {
           <div className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-slate-600">Сценарий МЭР:</span>
             {([[false, "Базовый"], [true, "Консервативный"]] as const).map(([c, l]) => (
-              <button key={l} type="button" onClick={() => { setCons(c); setYearSel(null); }}
+              <button key={l} type="button" onClick={() => { setCons(c); }}
                 className={`rounded-lg border px-3 py-1 ${cons === c ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                {l} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === (c ? consKind(tabKind as ScenarioKind) : tabKind) && (!onlyPending || !i.approved)).length}</span>
+                {l} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === (c ? consKind(tabKind as ScenarioKind) : tabKind) && i.year === year && (!onlyPending || !i.approved)).length}</span>
               </button>
             ))}
             <span className="hint max-w-3xl">Минэкономразвития публикует два варианта прогноза. <b>Базовый</b> — основной, самый вероятный: по нему считается прогноз цен. <b>Консервативный</b> — на случай, если экономика пойдёт хуже (слабее рубль, выше инфляция); показывается вторым вариантом в карточке позиции и в отчёте, чтобы был виден запас.</span>
@@ -543,17 +562,6 @@ export default function IndicesPage() {
             <p className="hint max-w-3xl">{tabKind === "to_december" && lastMonth
               ? `Доводит цену договора до уровня последнего месяца с данными Росстата (сейчас — ${MONTHS[lastMonth - 1]} ${year}).`
               : tab.hint}{tabKind === "to_december" && " Если у раздела есть подгруппы, позиции с кодом подгруппы считаются по её индексу, остальные — по индексу всего раздела."}</p>
-            {years.length > 1 && (
-              <div className="flex flex-wrap items-center gap-2 text-sm">
-                <span className="text-slate-600">Год:</span>
-                {years.map((y) => (
-                  <button key={y} type="button" onClick={() => setYearSel(y)}
-                    className={`rounded-lg border px-3 py-1 ${y === year ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                    {y} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === kind && i.year === y && (!onlyPending || !i.approved)).length}</span>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
           {canEdit && (
             <div className="flex gap-2">
