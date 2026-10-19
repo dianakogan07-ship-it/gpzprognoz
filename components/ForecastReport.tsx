@@ -202,7 +202,8 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
               {!approved && <p className="mt-1 text-sm font-semibold" style={{ color: RC.warn }}>Прогноз не утверждён, цифры могут измениться</p>}
             </div>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-              <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.navy }}>
+              {/* Итог — тем же цветом, что столбик «Прогноз» на водопаде, а не цена договоров */}
+              <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.violet }}>
                 <p className="text-xs text-white/75">Средний рост цен в {year}</p>
                 <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(total.total)}</p>
                 <p className="text-[11.5px] text-white/75">{cpi != null ? `инфляция, прогноз ${cpiSource}: ${fmtPct(cpi)}` : "прогноза инфляции в базе нет"}</p>
@@ -256,10 +257,20 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
               <DotPlot items={multi} year={year} baseYear={baseYear} />
             </> : <p className="text-sm" style={{ color: RC.muted }}>В срезе нет предметов, которые закупаются в двух и более регионах — сравнивать не с чем.</p>}
             {single.length > 0 && (
-              <p className="text-xs" style={{ color: RC.ink2 }}>
-                <b style={{ color: RC.ink }}>Только в одном регионе: </b>
-                {[...new Set(single.map((x) => `${x.subject}, ${x.unit} (${shortRegion(x.regs[0].name)})`))].join(" · ")}
-              </p>
+              <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2 }}>
+                <p className="font-semibold" style={{ color: RC.ink }}>Закупались только в одном регионе — сравнить не с чем</p>
+                <p className="mt-0.5">Эти предметы закупались только в одном регионе, поэтому сравнить цену с другими регионами нельзя. Прогнозная цена {year} — ниже, рост цен — на листе «Рост по предмету закупки».</p>
+                <table className="mt-2 w-full" style={NUM}>
+                  <thead style={{ color: RC.muted }}><tr><th className="py-1 pr-3 text-left font-medium">Предмет закупки</th><th className="py-1 pr-3 text-left font-medium">Регион</th><th className="py-1 text-right font-medium">Прогноз {year}, без НДС</th></tr></thead>
+                  <tbody>{single.map((x) => (
+                    <tr key={`${x.okpd2}|${x.unit}`} className="border-t" style={{ borderColor: RC.line }}>
+                      <td className="py-1 pr-3">{x.subject}</td>
+                      <td className="py-1 pr-3">{shortRegion(x.regs[0].name)}</td>
+                      <td className="whitespace-nowrap py-1 text-right">{rubShort(x.regs[0].fc)} за {x.unit}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
             )}
             {sources.length > 0 && (
               <p className="text-[10.5px]" style={{ color: RC.muted }}>
