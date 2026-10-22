@@ -514,8 +514,12 @@ export default function IndicesPage() {
               {y}{y < thisTarget && <span className="ml-1 text-xs text-slate-400">архив</span>}
             </button>
           ))}
+          <select aria-label="Другой год" className="inp w-auto py-1 text-sm" value="" onChange={(e) => e.target.value && setTargetSel(Number(e.target.value))}>
+            <option value="">Другой год…</option>
+            {Array.from({ length: thisTarget + 3 - 2015 }, (_, i) => thisTarget + 2 - i).filter((y) => !targetYears.includes(y)).map((y) => <option key={y} value={y}>{y}</option>)}
+          </select>
           <span className="hint">{target < thisTarget
-            ? `Архив: индексы, по которым считался прогноз на ${target}. Они не меняются при загрузке данных на новые годы.`
+            ? `Индексы на ${target} год и пересчёт по месяцам за ${target - 1} — например, для прошлых прогнозов или проверки точности. Загрузки выше сохраняются в этот год.`
             : `Индексы на ${target} год и пересчёт по месяцам за ${target - 1}. Загрузки выше сохраняются в этот год.`}</span>
         </div>
         {pendingTotal > 0 && (

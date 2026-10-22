@@ -94,8 +94,17 @@ function findColumn(rows: Row[], from: number, to: number, year: number, tolDefa
   let tol = tolDefault;
   const years: Cell[] = [], bases: Cell[] = [];
   let firstX = Infinity;
+  // Склеенный заголовок «оценка базовый» под соседними годами: делим на две подколонки
+  const yearCells = rows.slice(from, to).flatMap((r) => r.cells.filter((c) => /^20\d\d/.test(c.text)));
+  const split = (c: Cell): Cell[] => {
+    const m = c.text.match(/^(отч[её]т\S*|оценк\S*)\s+(базов\S*|консерв\S*)$/i);
+    const y = m && yearCells.filter((y) => y.x < c.x && c.x - y.x < 40).sort((a, b) => b.x - a.x)[0];
+    return m && y ? [{ ...c, text: m[1], x: y.x }, { ...c, text: m[2], x: 2 * c.x - y.x }] : [c];
+  };
+  const own: Cell[] = [];
   for (let i = from; i < to; i++) {
-    for (const c of rows[i].cells) {
+    for (const c of rows[i].cells.flatMap(split)) {
+      if (/^(отч[её]т|оценк)/i.test(c.text)) own.push(c);
       if (YEAR(year).test(c.text)) years.push(c);
       if (/^20\d\d/.test(c.text)) firstX = Math.min(firstX, c.x);
       if (VAR.test(c.text)) bases.push(c);
@@ -108,6 +117,8 @@ function findColumn(rows: Row[], from: number, to: number, year: number, tolDefa
   if (gaps.length) tol = Math.max(Math.min(...gaps) * 0.55, 0.4);
   const yearX = years[0].x;
   // Год над подколонками вариантов — берём ближайшую подколонку «базовый»
+  // Под годом одна колонка («отчёт», «оценка») — вариантов у него нет
+  if (own.some((o) => Math.abs(o.x - yearX) <= tol)) return { x: yearX, tolerance: tol, firstX };
   const near = bases.filter((b) => Math.abs(b.x - yearX) < tol * 6).sort((a, b) => Math.abs(a.x - yearX) - Math.abs(b.x - yearX));
   return { x: near.length ? near[0].x : yearX, tolerance: tol, firstX };
 }

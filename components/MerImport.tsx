@@ -37,9 +37,13 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
   const [rows, setRows] = useState<Edit[]>([]);
   const [doc, setDoc] = useState({ title: "", date: "" });
   const [fileName, setFileName] = useState("");
+  // Год, за который берём значения из документа: по умолчанию — выбранный на странице, можно сменить в предпросмотре
+  const [year, setYear] = useState(targetYear);
+  const [file, setFile] = useState<File | null>(null);
 
-  async function onFile(f: File) {
-    setBusy(true); setError(null); setFileName(f.name);
+  async function onFile(f: File, y = targetYear) {
+    setBusy(true); setError(null); setFileName(f.name); setFile(f); setYear(y);
+    const targetYear = y;
     try {
       let res: Response;
       const isPdf = f.name.toLowerCase().endsWith(".pdf");
@@ -74,7 +78,7 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
     const v = 1 + Number(e.percentInput.replace(",", ".").replace("−", "-")) / 100;
     const keys = e.kind === "forecast" ? parseCodeInput(e.codeInput) : e.kind === "fx" ? ["USD"] : [null];
     return keys.map((key) => ({
-      kind: (e.variant === "cons" ? `${e.kind}_cons` : e.kind) as MerIncoming["kind"], key, year: targetYear, value: Math.round(v * 100000) / 100000, indicator: e.kind === "forecast" ? e.indicator : null,
+      kind: (e.variant === "cons" ? `${e.kind}_cons` : e.kind) as MerIncoming["kind"], key, year, value: Math.round(v * 100000) / 100000, indicator: e.kind === "forecast" ? e.indicator : null,
       ref_deflator: e.deflator, raw_line: e.raw, doc_page: e.page,
     }));
   };
@@ -119,7 +123,7 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
       </label>
       {error && !result && <span className="text-sm text-red-600">{error}</span>}
       {result && (
-        <Modal wide title="Предпросмотр прогноза МЭР" subtitle={`${fileName} · значения на ${targetYear} год${rows.some((r) => r.variant === "cons") ? " · базовый и консервативный варианты" : ""}`} onClose={() => setResult(null)}
+        <Modal wide title="Предпросмотр прогноза МЭР" subtitle={`${fileName}${rows.some((r) => r.variant === "cons") ? " · базовый и консервативный варианты" : ""}`} onClose={() => setResult(null)}
           footer={<>
             <span className="mr-auto self-center text-sm text-slate-600">
               Будет сохранено: новых {counts.insert}, обновится {counts.update}, новых версий {counts.version}{counts.same ? `, без изменений ${counts.same}` : ""}
@@ -127,6 +131,8 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
             <button className="btn-sec" onClick={() => setResult(null)}>Отмена</button>
             <button className="btn" disabled={busy || !ready.length || !doc.title.trim()} onClick={save}>{busy ? "Сохранение…" : `Сохранить на проверку (${ready.length})`}</button>
           </>}>
+          <YearPicker value={year} busy={busy} onChange={(y) => file && onFile(file, y)}
+            hint="Из документа берутся значения выбранного года и сохраняются как индексы на этот год. Документ МЭР обычно содержит отчётный год и 3 года прогноза." />
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">Не удалось сохранить: {error}</p>}
           {result.warnings.length > 0 && (
             <ul className="space-y-0.5 rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">{result.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
@@ -182,5 +188,20 @@ export function MerImportButton({ reference, targetYear, onDone, disabled }: {
         </Modal>
       )}
     </>
+  );
+}
+
+/** Выбор года данных: любой год от 2015 до трёх лет вперёд */
+export function YearPicker({ value, onChange, busy, hint }: { value: number; onChange: (y: number) => void; busy?: boolean; hint: string }) {
+  const now = new Date().getFullYear();
+  const years = Array.from({ length: now + 4 - 2015 }, (_, i) => now + 3 - i);
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-slate-50 px-4 py-2 text-sm">
+      <label htmlFor="data-year" className="font-medium text-slate-900">Год данных:</label>
+      <select id="data-year" className="inp w-28 py-1" value={value} disabled={busy} onChange={(e) => onChange(Number(e.target.value))}>
+        {years.map((y) => <option key={y} value={y}>{y}</option>)}
+      </select>
+      <span className="hint">{busy ? "Разбираю файл…" : hint}</span>
+    </div>
   );
 }

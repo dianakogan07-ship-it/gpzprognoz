@@ -6,6 +6,7 @@ import { IconUpload } from "./Icons";
 import { formatGrowth } from "@/lib/indexFormat";
 import { minstroyByRegion, parseMinstroy, type MinstroyFile } from "@/lib/minstroy";
 import type { Reference } from "@/lib/types";
+import { YearPicker } from "./MerImport";
 
 /** Где и что скачать на ФГИС ЦС — показывается на вкладке «Стройка по регионам» */
 export function MinstroyHowTo() {
@@ -27,6 +28,7 @@ export function MinstroyImportButton({ reference, targetYear, onDone, disabled }
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<ReturnType<typeof minstroyByRegion> | null>(null);
+  const [year, setYear] = useState(targetYear);
 
   async function onFiles(fs: File[]) {
     setError(null);
@@ -39,7 +41,7 @@ export function MinstroyImportButton({ reference, targetYear, onDone, disabled }
     }
     setBusy(null);
     if (bad.length) setError(bad.join(" "));
-    if (parsed.length) setRows(minstroyByRegion(parsed));
+    if (parsed.length) { setRows(minstroyByRegion(parsed)); setYear(targetYear); }
   }
 
   const ready = (rows ?? []).filter((r) => r.region && r.value != null);
@@ -48,7 +50,7 @@ export function MinstroyImportButton({ reference, targetYear, onDone, disabled }
     try {
       await api("/api/dict/price_indices/bulk", "POST", {
         rows: ready.map((r) => ({
-          kind: "minstroy", key: r.region, year: targetYear, month: null, value: Math.round(r.value! * 100000) / 100000, source_code: "FGIS_CS", approved: false,
+          kind: "minstroy", key: r.region, year, month: null, value: Math.round(r.value! * 100000) / 100000, source_code: "FGIS_CS", approved: false,
           note: `ФГИС ЦС, индексы к группам однородных ресурсов, ${r.period}; зоны: ${r.zones.map((z) => z.zone).join("; ")}`,
         })),
       });
@@ -66,9 +68,10 @@ export function MinstroyImportButton({ reference, targetYear, onDone, disabled }
       </label>
       {error && !rows && <span className="text-sm text-red-600">{error}</span>}
       {rows && (
-        <Modal wide title="Индексы Минстроя по регионам" subtitle={`Рост сметной стоимости за год — для прогноза ${targetYear}`} onClose={() => setRows(null)}
+        <Modal wide title="Индексы Минстроя по регионам" subtitle={`Рост сметной стоимости за год — сохранится на ${year} год`} onClose={() => setRows(null)}
           footer={<><button className="btn-sec" onClick={() => setRows(null)}>Отмена</button>
             <button className="btn" disabled={!!busy || !ready.length} onClick={save}>{busy ?? `Сохранить на проверку (${ready.length})`}</button></>}>
+          <YearPicker value={year} onChange={setYear} hint="На какой год сохранить индексы. Обычно — год прогноза, следующий за кварталами в файлах." />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <p className="hint">Рост = стоимость корзины строительных ресурсов (материалы, оборудование, машины) в новом квартале к тому же кварталу годом раньше, по сметным ценам 2022 года как весам.</p>
           <table className="tbl">
