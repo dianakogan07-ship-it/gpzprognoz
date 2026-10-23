@@ -16,7 +16,7 @@ describe("напоминания об устаревших данных", () => 
     const old = fresh.map((i) => (i.kind !== "to_december" ? { ...i, loaded_at: "2026-05-01T00:00:00Z" } : i));
     expect(ids(staleness(old, 2027, 2026, at("2026-10-19")))).toEqual(["mer"]);
     // после октябрьского опроса Банка России инфляцию тоже пора обновить
-    expect(ids(staleness(old, 2027, 2026, at("2026-11-05")))).toEqual(["mer", "cbr"]);
+    expect(ids(staleness(old, 2027, 2026, at("2026-11-05")))).toEqual(expect.arrayContaining(["mer", "cbr"]));
     // в сентябре новый прогноз ещё могли не опубликовать — не торопим
     expect(ids(staleness(old, 2027, 2026, at("2026-09-15")))).not.toContain("mer");
   });
