@@ -14,6 +14,7 @@ const biasText = (s: AccuracyStat) => (s.bias == null ? "" : Math.abs(s.bias) < 
 export default function AccuracyPage() {
   const [data, setData] = useState<AccuracyYear[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sel, setSel] = useState<number | null>(null);
   useEffect(() => { api("/api/accuracy", "GET").then(setData).catch((e) => setError(e instanceof Error ? e.message : String(e))); }, []);
 
   return (
@@ -30,23 +31,12 @@ export default function AccuracyPage() {
       {!data && !error && <p className="hint">Загрузка…</p>}
       {data && data.length === 0 && <div className="card text-sm text-slate-600">Пока нет прогнозов. Загрузите ГПЗ и отчётность за год — и здесь появится сравнение.</div>}
 
-      {data && data.some((y) => y.both) && (
-        <div className="card">
-          <p className="mb-2 font-semibold text-slate-900">Итог по годам — типичная ошибка</p>
-          <table className="tbl">
-            <thead><tr><th>Год</th><th className="text-right">Ручной прогноз (ГПЗ)</th><th className="text-right">Прогноз системы</th><th>Что точнее</th><th className="text-right">Позиций</th></tr></thead>
-            <tbody>{data.filter((y) => y.both).map((y) => (
-              <tr key={y.year}><td className="font-medium">{y.year}</td>
-                <td className="text-right">{pct(y.both!.manual.error)}</td>
-                <td className="text-right">{pct(y.both!.system.error)}</td>
-                <td><Verdict y={y} /></td>
-                <td className="text-right text-slate-500">{y.both!.n}</td></tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-
-      {data?.map((y) => <YearCard key={y.year} y={y} />)}
+      {data && data.length > 0 && (() => {
+        // По умолчанию — последний год, где есть обе цифры
+        const year = sel ?? (data.find((y) => y.both) ?? data[0]).year;
+        const y = data.find((x) => x.year === year)!;
+        return <YearCard key={y.year} y={y} years={data.map((x) => x.year)} onYear={setSel} />;
+      })()}
     </div>
   );
 }
@@ -60,7 +50,7 @@ function Verdict({ y }: { y: AccuracyYear }) {
     : <span className="font-medium text-amber-700">ручной точнее на {pct(-d).replace("%", "п. п.")}</span>;
 }
 
-function YearCard({ y }: { y: AccuracyYear }) {
+function YearCard({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYear: (y: number) => void }) {
   const [all, setAll] = useState(false);
   const man = y.both?.manual ?? y.manual, sys = y.both?.system ?? (y.system.n ? y.system : null);
   const rows = [...y.rows].sort((a, b) => Math.abs(err(b.system ?? b.manual, b.fact) ?? 0) - Math.abs(err(a.system ?? a.manual, a.fact) ?? 0));
@@ -68,7 +58,12 @@ function YearCard({ y }: { y: AccuracyYear }) {
   return (
     <div className="card space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-xl font-semibold text-slate-900">{y.year} год</h2>
+        <label className="flex items-center gap-2 text-xl font-semibold text-slate-900">
+          <select aria-label="Год" className="inp w-auto py-1 text-xl font-semibold" value={y.year} onChange={(e) => onYear(Number(e.target.value))}>
+            {years.map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+          год
+        </label>
         <p className="hint">Факт — договоры {y.year} из «<Link className="text-brand hover:underline" href={`/forecasts/${y.factFrom!.id}`}>{y.factFrom!.title}</Link>»
           {y.systemFrom && <>; прогноз системы — «<Link className="text-brand hover:underline" href={`/forecasts/${y.systemFrom.id}`}>{y.systemFrom.title}</Link>»</>}</p>
       </div>
