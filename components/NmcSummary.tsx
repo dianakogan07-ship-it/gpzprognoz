@@ -23,7 +23,7 @@ export function NmcSummary({ growth, reserve, year, baseYear, compact }: { growt
   const tiles: [string, string, string, boolean?][] = [
     [`Рост цен по индексам на ${year}`, pctSigned(growth), `прогноз МЭР, Банка России и Росстата к ценам договоров ${baseYear}`],
     ["Надбавка закупщиков", pctSigned(r), r == null ? "нет данных — загрузите ГПЗ и отчётность прошлых лет" : `на столько НМЦ в ГПЗ была выше заключённых договоров (${reserveYearsText(reserve!)}), в среднем`],
-    [`Рекомендуемая НМЦ на ${year}`, pctSigned(r == null ? growth : nmcGrowth(growth, r)), r == null ? "= рост по индексам: надбавки прошлых лет нет" : `к ценам договоров ${baseYear}: рост по индексам + надбавка`, true],
+    [`Рекомендуемая НМЦ на ${year}`, pctSigned(r == null ? growth : nmcGrowth(growth, r)), r == null ? "= рост по индексам: надбавки прошлых лет нет" : `рост ${pctSigned(growth)} и надбавка ${pctSigned(r)} — сумма, к ценам договоров ${baseYear}`, true],
   ];
   return (
     <div className={`grid gap-2 ${compact ? "grid-cols-3" : "sm:grid-cols-3"}`}>

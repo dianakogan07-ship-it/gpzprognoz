@@ -1,6 +1,6 @@
 /**
  * Надбавка закупщиков: на сколько НМЦ в ГПЗ была выше цены заключённого договора (медиана по закупкам года).
- * Рекомендуемая НМЦ = цена договоров базового года × (1 + рост по индексам) × (1 + средняя надбавка прошлых лет).
+ * Рекомендуемая НМЦ = рост по индексам + средняя надбавка прошлых лет (простым сложением процентов — так её проще проверить).
  */
 export interface ReserveYear { year: number; overall: number | null; byCat: Record<string, { n: number; reserve: number }> }
 export interface Reserve {
@@ -28,7 +28,7 @@ export function reserveFor(all: ReserveYear[] | null | undefined, upTo: number):
 }
 
 /** Рекомендуемая НМЦ: рост к ценам договоров базового года, % */
-export const nmcGrowth = (growth: number, reserve: number) => r1(((1 + growth / 100) * (1 + reserve / 100) - 1) * 100);
+export const nmcGrowth = (growth: number, reserve: number) => r1(growth + reserve);
 
 /** «2024 — 0 %, 2025 — +3,6 %» */
 export const reserveYearsText = (r: Reserve) =>

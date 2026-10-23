@@ -657,7 +657,7 @@ function ThreeNumbers({ growth, reserve, year, baseYear, cpi, cpiSource }: { gro
       <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.violet }}>
         <p className="text-xs text-white/75">Рекомендуемая НМЦ на {year}</p>
         <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(n)}</p>
-        <p className="text-[11.5px] text-white/75">{r == null ? "= рост по индексам" : "рост по индексам + надбавка"}: умножьте сумму договора {baseYear} на {fmtMult(n)}</p>
+        <p className="text-[11.5px] text-white/75">{r == null ? "= рост по индексам" : `рост ${fmtPct(growth)} и надбавка ${fmtPct(r)} — сумма`}: умножьте сумму договора {baseYear} на {fmtMult(n)}</p>
       </div>
     </div>
   );
