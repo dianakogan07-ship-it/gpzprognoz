@@ -8,6 +8,7 @@ import { api, useReference } from "@/components/useReference";
 import { ForecastTable, useForecastFilters } from "@/components/ForecastTable";
 import { ForecastReport } from "@/components/ForecastReport";
 import { PositionDetails } from "@/components/PositionDetails";
+import { UpdateFiles } from "@/components/EditCard";
 import { Modal } from "@/components/Modal";
 import { PromptModal } from "@/components/PromptModal";
 import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecasts/client";
@@ -70,6 +71,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
   const { reference } = useReference();
   const filters = useForecastFilters();
   const [f, setF] = useState<Forecast | null>(null);
+  const [updating, setUpdating] = useState(false);
   // Запас на торги по прошлым годам: насколько НМЦ в ГПЗ была выше цены договора
   const [reserve, setReserve] = useState<{ years: number[]; overall: number | null; byCat: Record<string, { n: number; reserve: number }> } | null>(null);
   const [versionId, setVersionId] = useState<number | null>(null);
@@ -183,6 +185,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
                 </select>
               </label>
             )}
+            {isCurrent && !archived && <button className="btn-sec" onClick={() => setUpdating(true)}>Обновить данные</button>}
             <Menu items={menu}>⋯</Menu>
           </div>
         </div>
@@ -247,6 +250,10 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           <PositionDetails itemId={v.meta.itemId} baseYear={f.base_year} />
         </> : null)} />}
 
+      {updating && reference && (
+        <UpdateFiles id={f.id} title={f.title} year={f.year} baseYear={f.base_year} reference={reference} onClose={() => setUpdating(false)}
+          onSaved={async (m) => { setUpdating(false); setData(null); await load(); setMsg(m); }} />
+      )}
       {editing && (
         <EditModal v={editing} frozen={frozen} onClose={() => setEditing(null)} onSave={async (field, value, reason) => {
           const r = await api(`/api/forecasts/${id}/items/${editing.meta!.itemId}`, "PATCH", { field, value, reason });

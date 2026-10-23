@@ -8,7 +8,7 @@ import { PromptModal } from "@/components/PromptModal";
 import { IconPlus } from "@/components/Icons";
 import { exportVersion } from "@/lib/forecasts/client";
 import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
-import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
+import { COLOR_CLASS, EditCard, HEAD, UpdateFiles } from "@/components/EditCard";
 import { DataRefresh } from "@/components/DataRefresh";
 import { staleness } from "@/lib/freshness";
 import type { ForecastCard } from "@/lib/forecasts/store";
@@ -25,7 +25,7 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
   const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
   const archived = c.status === "archived";
   const items: MenuItem[] = [
-    ...(archived ? [] : [{ label: "Редактировать", onClick: () => onAction(c, "edit") }]),
+    ...(archived ? [] : [{ label: "Обновить данные", onClick: () => onAction(c, "update") }, { label: "Редактировать", onClick: () => onAction(c, "edit") }]),
     { label: "Сравнить", onClick: () => onAction(c, "compare") },
     { label: "История", onClick: () => onAction(c, "history") },
     ...(archived ? [] : [{ label: "В архив", onClick: () => onAction(c, "archive") }]),
@@ -83,6 +83,7 @@ export default function ForecastsPage() {
   const [versionFor, setVersionFor] = useState<ForecastCard | null>(null);
   const [editing, setEditing] = useState<{ c: ForecastCard; files: boolean } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [updating, setUpdating] = useState<ForecastCard | null>(null);
 
   const load = useCallback(async () => {
     try { setCards(await api("/api/forecasts", "GET")); setError(null); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
@@ -110,6 +111,7 @@ export default function ForecastsPage() {
       if (a === "edit") setEditing({ c, files: false });
       if (a === "refresh") setRefreshFor(c);
       if (a === "files") setEditing({ c, files: true });
+      if (a === "update") setUpdating(c);
       if (a === "delete" && confirm(`Удалить прогноз «${c.title}» со всеми версиями и историей? Восстановить его будет нельзя.`)) {
         await api(`/api/forecasts/${c.id}`, "DELETE"); setMsg(`Прогноз «${c.title}» удалён`); await load();
       }
@@ -198,6 +200,10 @@ export default function ForecastsPage() {
         <DataRefresh reference={reference} year={refreshFor.year} baseYear={refreshFor.base_year} onClose={() => setRefreshFor(null)}
           stale={staleness(reference.indices, refreshFor.year, refreshFor.base_year)}
           onDone={async () => { await reload(); await load(); }} />
+      )}
+      {updating && reference && (
+        <UpdateFiles id={updating.id} title={updating.title} year={updating.year} baseYear={updating.base_year} reference={reference} onClose={() => setUpdating(null)}
+          onSaved={async (m) => { setUpdating(null); setMsg(m); await load(); }} />
       )}
       {editing && reference && (
         <EditCard c={editing.c} reference={reference} focusFiles={editing.files} onClose={() => setEditing(null)}

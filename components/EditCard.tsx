@@ -119,3 +119,39 @@ export function EditCard({ c, reference, focusFiles, onClose, onSaved }: {
     </Modal>
   );
 }
+
+/** Обновить данные прогноза: те же годы, новые файлы ГПЗ и отчётности — создаётся новая версия */
+export function UpdateFiles({ id, title, year, baseYear, reference, onClose, onSaved }: {
+  id: number; title: string; year: number; baseYear: number; reference: Reference; onClose: () => void; onSaved: (msg: string) => Promise<void>;
+}) {
+  const [gpz, setGpz] = useState<File | null>(null);
+  const [rep, setRep] = useState<File | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<UploadIssues | null>(null);
+  const [trustVat, setTrustVat] = useState(false);
+  async function save() {
+    if (!gpz || !rep) return setError("Выберите оба файла: ГПЗ и отчётность");
+    setBusy("Чтение файлов…"); setError(null);
+    try {
+      let calc = await calcFromFiles(gpz, rep, reference, year, baseYear);
+      if (!issues) {
+        const found = await uploadIssues(calc);
+        if (found.any) { setIssues(found); setBusy(null); return; }
+      } else if (trustVat) calc = await calcFromFiles(gpz, rep, reference, year, baseYear, { trustVat: true });
+      const v = await api(`/api/forecasts/${id}/data`, "POST", { year, baseYear });
+      await saveRows(id, v.versionId, calc, setBusy);
+      await onSaved(`«${title}» обновлён: версия ${v.number}, в расчёте ${calc.result.rows.length} строк. Прежняя версия осталась в истории.`);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); setBusy(null); }
+  }
+  return (
+    <Modal title="Обновить данные" subtitle={`${title} · прогноз на ${year} · база ${baseYear}`} onClose={onClose}
+      footer={<><button className="btn-sec" onClick={onClose}>Отмена</button><button className="btn" disabled={!!busy || !gpz || !rep} onClick={save}>{busy ?? (issues ? "Подтвердить и обновить" : "Обновить")}</button></>}>
+      <FilePick label={`ГПЗ ${baseYear}`} file={gpz} onChange={(f) => { setGpz(f); setIssues(null); }} />
+      <FilePick label={`Отчётность ${baseYear}`} hint="Исполненные договоры за год базы" file={rep} onChange={(f) => { setRep(f); setIssues(null); }} />
+      {issues && <UploadReview issues={issues} trustVat={trustVat} setTrustVat={setTrustVat} />}
+      <p className="hint">Прогноз пересчитается по новым файлам и текущим индексам — появится новая версия, прежняя останется в истории. Пересоздавать прогноз не нужно.</p>
+      {error && <p className="text-sm text-red-600">{error}</p>}
+    </Modal>
+  );
+}
