@@ -1,37 +1,37 @@
-import { sql } from "../db";
+import { listTable, sql } from "../db";
 import { median } from "../forecast";
 import type { StoredItem } from "./model";
 
-/** Строка сравнения: факт года, ручная цена из плана (НМЦ) и прогноз системы — за единицу без НДС */
-export interface AccuracyRow {
-  subject: string; region: string | null; unit: string; okpd2: string; fact: number; manual: number | null; system: number | null;
-  /** Как найден прогноз системы: тот же ключ; тот же код, единица и регион; тот же код и единица в другом регионе */
-  match?: "exact" | "region" | "code";
+/**
+ * Вид продукции — первые две ступени кода ОКПД2 (19.20 — нефтепродукты) и единица.
+ * Цены — медианы за единицу без НДС по всем позициям вида в году.
+ */
+export interface AccuracyGroup {
+  code: string; name: string; unit: string;
+  /** Позиций вида: в прошлом году (прогноз системы) и в этом (факт) */
+  nBase: number; nFact: number;
+  base: number; fact: number; manual: number | null; system: number;
+  /** Рост к прошлому году, % */
+  gFact: number; gManual: number | null; gSystem: number;
 }
-export interface AccuracyStat { n: number; error: number | null; bias: number | null }
 export interface AccuracyYear {
   year: number;
-  /** Прогноз с базой этого года: из него ручная цена (НМЦ плана) и факт (договоры года) */
-  factFrom: { id: number; title: string } | null;
-  /** Прогноз системы на этот год (база — прошлый год) */
-  systemFrom: { id: number; title: string } | null;
-  /** Сравнение на одних и тех же позициях — там, где есть все три цены */
-  both: { n: number; manual: AccuracyStat; system: AccuracyStat } | null;
-  manual: AccuracyStat;
-  system: AccuracyStat;
-  /** Сколько позиций сопоставлено с прогнозом системы и как */
-  matched: { exact: number; region: number; code: number };
-  rows: AccuracyRow[];
+  /** Прогноз системы на год (база — прошлый год): из него цены прошлого года и прогноз */
+  systemFrom: { id: number; title: string; growth: number; items: number } | null;
+  /** Прогноз с базой этого года: из него факт (договоры года) и НМЦ закупщиков */
+  factFrom: { id: number; title: string; items: number } | null;
+  /** Рост по всем сопоставленным видам, %: виды взвешены суммой цен прошлого года, как в карточке прогноза */
+  fact: number | null; system: number | null;
+  /** Ручной — по видам, где есть НМЦ; факт на том же наборе */
+  manual: number | null; factManual: number | null;
+  /** Виды: только в прошлом году, только в этом, общие */
+  kinds: { base: number; fact: number; common: number };
+  groups: AccuracyGroup[];
 }
 
 const STATUS_RANK: Record<string, number> = { approved: 0, review: 1, draft: 2, archived: 3, rejected: 4 };
-const r1 = (x: number | null) => (x == null ? null : Math.round(x * 10) / 10);
-
-/** Типичная ошибка — медиана |прогноз / факт − 1|; смещение — медиана (прогноз / факт − 1): плюс — прогноз выше факта */
-function stat(pairs: { pred: number; fact: number }[]): AccuracyStat {
-  const d = pairs.filter((p) => p.fact > 0).map((p) => (p.pred / p.fact - 1) * 100);
-  return { n: d.length, error: d.length ? r1(median(d.map(Math.abs))) : null, bias: d.length ? r1(median(d)) : null };
-}
+const r1 = (x: number) => Math.round(x * 10) / 10;
+const pct = (p: number, b: number) => r1((p / b - 1) * 100);
 
 async function itemsOf(versionId: number): Promise<StoredItem[]> {
   const rows = await sql().query(
@@ -39,62 +39,70 @@ async function itemsOf(versionId: number): Promise<StoredItem[]> {
   return rows.map((r) => ({ ...r, base_price: Number(r.base_price), forecast_price: Number(r.forecast_price) })) as StoredItem[];
 }
 
-/** По каждому году: насколько ручная цена из ГПЗ и прогноз системы совпали с ценами договоров этого года */
+type D = { rawMedian?: number; nmcMedian?: number | null; unitLabel?: string };
+const dataOf = (i: StoredItem) => i.data as StoredItem["data"] & D;
+/** Цена договоров года по позиции — медиана без пересчёта внутри года */
+const contract = (i: StoredItem) => dataOf(i).rawMedian || i.base_price;
+const unitOf = (i: StoredItem) => String(dataOf(i).unitLabel ?? i.unit).trim().toLowerCase();
+const kindOf = (okpd2: string) => okpd2.split(".").slice(0, 2).join(".");
+
+/** Сводный рост по видам: взвешиваем суммой цен прошлого года */
+function total(gs: { base: number; nBase: number; g: number }[]) {
+  const w = gs.reduce((s, x) => s + x.base * x.nBase, 0);
+  return w ? r1(gs.reduce((s, x) => s + x.base * x.nBase * x.g, 0) / w) : null;
+}
+
+/**
+ * По каждому году Y: на сколько выросли цены договоров Y к Y−1 (факт), сколько заложили закупщики (НМЦ в ГПЗ Y)
+ * и сколько предсказала система (прогноз на Y по отчётности Y−1). Сравниваем по видам продукции, которые есть в обоих годах.
+ */
 export async function accuracyByYear(): Promise<AccuracyYear[]> {
-  const fs = await sql().query(`SELECT f.id, f.title, f.year, f.base_year, f.status, f.updated_at, f.current_version_id FROM forecasts f`);
-  // На каждый год — лучший прогноз: утверждённый, затем на проверке, в работе; при равенстве — свежий
-  const pick = (list: typeof fs) => list.sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || +new Date(b.updated_at) - +new Date(a.updated_at))[0] ?? null;
-  const years = [...new Set(fs.map((f) => Number(f.base_year)))].sort((a, b) => b - a);
+  const fs = await sql().query(`SELECT f.id, f.title, f.year, f.base_year, f.status, f.updated_at, f.current_version_id, v.stats
+    FROM forecasts f JOIN forecast_versions v ON v.id = f.current_version_id`);
+  const names = new Map((await listTable("okpd2")).map((o) => [String(o.code), String(o.name)]));
+  const pick = (list: typeof fs) => list.filter((f) => f.status !== "rejected")
+    .sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || +new Date(b.updated_at) - +new Date(a.updated_at))[0] ?? null;
+  const years = [...new Set(fs.flatMap((f) => [Number(f.base_year), Number(f.year)]))].sort((a, b) => b - a);
   const out: AccuracyYear[] = [];
   for (const year of years) {
-    const factF = pick(fs.filter((f) => Number(f.base_year) === year && f.status !== "rejected"));
-    if (!factF) continue;
-    const sysF = pick(fs.filter((f) => Number(f.year) === year && f.status !== "rejected"));
-    const facts = await itemsOf(factF.current_version_id);
-    // Прогноз системы ищем по ключу позиции; код вида закупки (WS) между годами часто меняется — тогда по ОКПД2, единице и региону,
-    // а если такого региона нет — по ОКПД2 и единице (медиана по регионам)
+    const sysF = pick(fs.filter((f) => Number(f.year) === year && Number(f.base_year) === year - 1));
+    const factF = pick(fs.filter((f) => Number(f.base_year) === year));
+    if (!sysF && !factF) continue;
     const sysItems = sysF ? await itemsOf(sysF.current_version_id) : [];
-    const byKey = new Map(sysItems.map((i) => [i.item_key, i.forecast_price]));
-    const group = (f: (i: StoredItem) => string) => {
-      const m = new Map<string, number[]>();
-      for (const i of sysItems) m.set(f(i), [...(m.get(f(i)) ?? []), i.forecast_price]);
-      return new Map([...m].map(([k, v]) => [k, median(v)]));
+    const factItems = factF ? await itemsOf(factF.current_version_id) : [];
+    const byKind = (xs: StoredItem[]) => {
+      const m = new Map<string, StoredItem[]>();
+      for (const i of xs) { const k = `${kindOf(i.okpd2)}|${unitOf(i)}`; m.set(k, [...(m.get(k) ?? []), i]); }
+      return m;
     };
-    // Единицу сравниваем по названию: в разные годы в файлах бывает то код ОКЕИ, то «шт»
-    const u = (i: StoredItem) => String((i.data as { unitLabel?: string }).unitLabel ?? i.unit).trim().toLowerCase();
-    const byRegion = group((i) => `${i.okpd2}|${u(i)}|${i.region ?? ""}`);
-    const byCode = group((i) => `${i.okpd2}|${u(i)}`);
-    const findSys = (i: StoredItem): [number | null, AccuracyRow["match"]] => {
-      if (byKey.has(i.item_key)) return [byKey.get(i.item_key)!, "exact"];
-      const r = byRegion.get(`${i.okpd2}|${u(i)}|${i.region ?? ""}`); if (r != null) return [r, "region"];
-      const c = byCode.get(`${i.okpd2}|${u(i)}`); if (c != null) return [c, "code"];
-      return [null, undefined];
-    };
-    const rows: AccuracyRow[] = facts.map((i) => {
-      let sys = findSys(i);
-      const f0 = (i.data as { rawMedian?: number }).rawMedian || i.base_price;
-      // Разница больше чем в 10 раз — это другая единица или другой товар, а не ошибка прогноза
-      if (sys[0] != null && f0 > 0 && sys[1] !== "exact" && (sys[0] / f0 > 10 || sys[0] / f0 < 0.1)) sys = [null, undefined];
-      const d = i.data as StoredItem["data"] & { rawMedian?: number; nmcMedian?: number | null; unitLabel?: string; regionName?: string };
-      return {
-        subject: i.subject, okpd2: i.okpd2, region: d.regionName ?? i.region, unit: d.unitLabel ?? i.unit,
-        fact: d.rawMedian || i.base_price, manual: d.nmcMedian && d.nmcMedian > 0 ? d.nmcMedian : null, system: sys[0], match: sys[1],
-      };
-    });
-    const all3 = rows.filter((r) => r.manual != null && r.system != null);
+    const B = byKind(sysItems), F = byKind(factItems);
+    const groups: AccuracyGroup[] = [];
+    for (const [k, bs] of B) {
+      const fx = F.get(k);
+      if (!fx) continue;
+      const base = median(bs.map(contract)), fact = median(fx.map(contract)), system = median(bs.map((i) => i.forecast_price));
+      // Разница больше чем в 10 раз — внутри вида закупали разное, сравнивать нельзя
+      if (!base || fact / base > 10 || fact / base < 0.1) continue;
+      const nmc = fx.map((i) => dataOf(i).nmcMedian).filter((v): v is number => !!v && v > 0);
+      const manual = nmc.length ? median(nmc) : null;
+      const [code, unit] = k.split("|");
+      groups.push({
+        code, unit: dataOf(bs[0]).unitLabel ?? unit, name: names.get(code) ?? bs[0].subject,
+        nBase: bs.length, nFact: fx.length, base, fact, manual, system,
+        gFact: pct(fact, base), gManual: manual != null ? pct(manual, base) : null, gSystem: pct(system, base),
+      });
+    }
+    const wm = groups.filter((g) => g.gManual != null);
     out.push({
       year,
-      factFrom: { id: factF.id, title: factF.title },
-      systemFrom: sysF ? { id: sysF.id, title: sysF.title } : null,
-      both: all3.length ? {
-        n: all3.length,
-        manual: stat(all3.map((r) => ({ pred: r.manual!, fact: r.fact }))),
-        system: stat(all3.map((r) => ({ pred: r.system!, fact: r.fact }))),
-      } : null,
-      manual: stat(rows.filter((r) => r.manual != null).map((r) => ({ pred: r.manual!, fact: r.fact }))),
-      system: stat(rows.filter((r) => r.system != null).map((r) => ({ pred: r.system!, fact: r.fact }))),
-      matched: { exact: rows.filter((r) => r.match === "exact").length, region: rows.filter((r) => r.match === "region").length, code: rows.filter((r) => r.match === "code").length },
-      rows: rows.filter((r) => r.manual != null || r.system != null),
+      systemFrom: sysF ? { id: sysF.id, title: sysF.title, growth: Number(sysF.stats?.growth ?? 0), items: sysItems.length } : null,
+      factFrom: factF ? { id: factF.id, title: factF.title, items: factItems.length } : null,
+      fact: total(groups.map((g) => ({ ...g, g: g.gFact }))),
+      system: total(groups.map((g) => ({ ...g, g: g.gSystem }))),
+      manual: total(wm.map((g) => ({ ...g, g: g.gManual! }))),
+      factManual: total(wm.map((g) => ({ ...g, g: g.gFact }))),
+      kinds: { base: B.size, fact: F.size, common: groups.length },
+      groups: groups.sort((a, b) => b.base * b.nBase - a.base * a.nBase),
     });
   }
   return out;
