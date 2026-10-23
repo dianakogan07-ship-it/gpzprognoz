@@ -77,7 +77,7 @@ function YearCard({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
           : <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
               <p className="font-medium text-slate-900">2 · Прогноз системы</p>
               {y.systemFrom
-                ? <p className="mt-1">В прогнозе «{y.systemFrom.title}» нет тех же позиций (код ОКПД2, регион и единица), что в договорах {y.year} года — сравнивать не с чем.</p>
+                ? <p className="mt-1">В прогнозе «{y.systemFrom.title}» нет позиций с теми же кодами ОКПД2 и единицами измерения, что в договорах {y.year} года, — сравнивать не с чем. Проверьте, что в нём год прогноза {y.year}, а базовый — {y.year - 1}.</p>
                 : <>
                   <p className="mt-1">Нет прогноза на {y.year} год. Создайте его из ГПЗ и отчётности {y.year - 1} года (год прогноза {y.year}) — и здесь появится вторая цифра.</p>
                   <Link href="/forecasts/new" className="btn-sec mt-3 inline-flex">Новый прогноз</Link>
@@ -86,6 +86,7 @@ function YearCard({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
       </div>
       {y.both && <p className="text-sm"><Verdict y={y} /> <span className="text-slate-500">— сравнение на {y.both.n} одинаковых позициях, где есть все три цены.</span></p>}
       {!y.both && sys && y.manual.n > 0 && <p className="hint">Нет позиций, где есть и ручная цена, и прогноз системы — сравнить на одних и тех же позициях нельзя.</p>}
+      {sys && (y.matched.region > 0 || y.matched.code > 0) && <p className="hint">Сопоставлено с прогнозом системы: {y.matched.exact} — та же позиция{y.matched.region ? `, ${y.matched.region} — тот же код ОКПД2, единица и регион (другой код вида закупки)` : ""}{y.matched.code ? `, ${y.matched.code} — тот же код ОКПД2 и единица, но другой регион (взята медиана)` : ""}.</p>}
       <p className="hint">Ручная цена — это НМЦ: в неё обычно заложен запас на торги, поэтому она чаще выше факта.</p>
 
       {rows.length > 0 && (
