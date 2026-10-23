@@ -325,7 +325,8 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       gpzMonths: gpzMonths && months && Math.abs(gpzMonths - months) > 1 ? gpzMonths : null,
       quarter: g.quarter,
       currency: normCurrency(rep.currency),
-      nmc: rep.nmcNoVat && rep.nmcNoVat > 0 ? rep.nmcNoVat / qty : null,
+      // НМЦ — цена, которую закупщик заложил в план: из отчётности, а если там нет — из ГПЗ
+      nmc: rep.nmcNoVat && rep.nmcNoVat > 0 ? rep.nmcNoVat / qty : g.nmcNoVat && g.nmcNoVat > 0 && g.quantity ? g.nmcNoVat / g.quantity : null,
       lot: g.lot ?? g.procId, start: startD ? startD.toISOString().slice(0, 10) : null, end: end ? end.toISOString().slice(0, 10) : null,
       mBase, mAfter, regionFixed: !!g.regionNote,
     });

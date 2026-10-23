@@ -139,6 +139,7 @@ export default function ForecastsPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-slate-900">Прогнозы</h1>
         <div className="flex gap-2">
+          <Link href="/accuracy" className="btn-sec">Точность по годам</Link>
           <Link href="/forecasts/new" className="btn"><IconPlus width={16} height={16} />Новый прогноз</Link>
         </div>
       </div>
