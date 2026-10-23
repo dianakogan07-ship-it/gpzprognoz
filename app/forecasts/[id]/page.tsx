@@ -157,7 +157,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold text-slate-900">{f.title}</h1>
-              <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${PILL[f.status]}`}>{STATUS_TITLE[f.status]}</span>
+              {!(isCurrent && !archived) && <span className={`rounded-md px-2 py-0.5 text-xs font-medium ${PILL[f.status]}`}>{STATUS_TITLE[f.status]}</span>}
             </div>
             <p className="hint mt-1">
               Версия {ver.number} · {STATUS_WHEN[ver.status]} {fmtShort(when)} · база {f.base_year}
@@ -190,9 +190,14 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         </div>
 
         {tab === "forecast" && <>
-        <p className="text-sm text-slate-700">
-          договоров {s.contracts} · позиций {s.items} · средний рост {fmtGrowth(s.growth)}
-        </p>
+        <div className="grid grid-cols-3 gap-2 sm:max-w-xl">
+          {([[fmtGrowth(s.growth), "средний рост цен"], [String(s.items), "позиций"], [String(s.contracts), `договоров ${f.base_year} в основе`]] as const).map(([v, l]) => (
+            <div key={l} className="rounded-lg bg-slate-50 px-3 py-2">
+              <p className="text-xl font-semibold text-slate-900">{v}</p>
+              <p className="text-xs text-slate-500">{l}</p>
+            </div>
+          ))}
+        </div>
         {s.excluded > 0 && (
           <p className="text-sm text-slate-500">
             {s.excluded} {plural(s.excluded, "строка", "строки", "строк")} из файлов не {plural(s.excluded, "попала", "попали", "попали")} в расчёт: по ним нет заключённого договора, цены или количества.{" "}

@@ -15,6 +15,8 @@ import { RosstatImportButton } from "@/components/RosstatImport";
 import { MinstroyHowTo, MinstroyImportButton } from "@/components/MinstroyImport";
 import { DATA_LINKS, DATA_LINKS_HINT } from "@/lib/sources";
 import { lastDataMonth } from "@/lib/logic";
+import { CbrField } from "@/components/DataRefresh";
+import { staleness, type FreshId } from "@/lib/freshness";
 
 type Tab = { kind: IndexKind; short: string; title: string; hint: string; empty: string; extra?: boolean };
 
@@ -31,6 +33,18 @@ const tabsFor = (target: number): Tab[] => [
     empty: "Строительство — самая крупная часть ГПЗ. Без региональных индексов Минстроя оно считается по общему индексу для всей страны." },
   { kind: "to_december", short: "Пересчёт по месяцам", title: "Перерасчёт цен по месяцам", hint: "Доводит цену договора до уровня последнего месяца с данными Росстата.", extra: true,
     empty: "Договор, заключённый в феврале, отражает февральские цены. Эти индексы поднимают его цену до уровня последнего месяца с данными Росстата, чтобы прогноз не получился заниженным. Если их нет, цена берётся как есть." },
+];
+
+/** Источники данных — карточки вверху раздела */
+const SOURCES: { id: FreshId; title: string; what: string; tab: IndexKind; match: (i: PriceIndex) => boolean }[] = [
+  { id: "mer", title: "Минэкономразвития", what: "Рост цен по отраслям, зарплаты и курс доллара. Раз в год, в сентябре.", tab: "forecast",
+    match: (i) => /^(forecast|wage|fx)/.test(i.kind) || (/^cpi/.test(i.kind) && i.source_code !== "CBR") },
+  { id: "cbr", title: "Банк России", what: "Прогноз инфляции — для позиций без отраслевого индекса. Сверять раз в месяц.", tab: "cpi",
+    match: (i) => i.kind === "cpi" && i.source_code === "CBR" },
+  { id: "rosstat", title: "Росстат", what: "Рост цен внутри года: доводит цену договора до последнего месяца. Ежемесячно.", tab: "to_december",
+    match: (i) => i.kind === "to_december" },
+  { id: "minstroy", title: "Минстрой (ФГИС ЦС)", what: "Стройка по регионам. Раз в квартал.", tab: "minstroy",
+    match: (i) => i.kind === "minstroy" },
 ];
 
 function StatusBadge({ approved }: { approved: boolean }) {
@@ -226,11 +240,10 @@ export default function IndicesPage() {
     if (t && ["forecast", "cpi", "wage", "fx", "minstroy", "to_december"].includes(t)) setTabKind(t as IndexKind);
   }, []);
   // Консервативный сценарий МЭР — те же вкладки, свой вид индекса
-  const [cons, setCons] = useState(false);
   const hasScenario = (SCENARIO_KINDS as IndexKind[]).includes(tabKind);
-  const kind: IndexKind = cons && hasScenario ? consKind(tabKind as ScenarioKind) : tabKind;
+  const kind: IndexKind = tabKind;
   const tab0 = tabs.find((t) => t.kind === tabKind)!;
-  const tab = { ...tab0, kind, title: cons && hasScenario ? `${tab0.title}, консервативный сценарий` : tab0.title };
+  const tab = { ...tab0, kind, title: tab0.title };
   const kt = keyType(kind);
   const [onlyPending, setOnlyPending] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -240,6 +253,7 @@ export default function IndicesPage() {
   const [busy, setBusy] = useState(false);
   const [showMissing, setShowMissing] = useState(false);
   const [showSources, setShowSources] = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const canEdit = db === true;
 
@@ -254,8 +268,10 @@ export default function IndicesPage() {
   const yearOf = (k: IndexKind, _sel: number | null) => defYear(k);
   const year = defYear(kind);
   const lastMonth = lastDataMonth(indices, year);
+  const stale = staleness(indices, target, target - 1);
   const rows = indices
-    .filter((i) => i.kind === kind && i.year === year && (!onlyPending || !i.approved))
+    .filter((i) => i.kind === kind && i.year === year && (!onlyPending || !i.approved
+      || (hasScenario && indices.some((o) => o.kind === consKind(kind as ScenarioKind) && !o.approved && (o.key ?? null) === (i.key ?? null) && o.year === i.year))))
     .sort((a, b) => b.year - a.year || (a.key ?? "").localeCompare(b.key ?? "", "ru", { numeric: true }) || (a.month ?? 0) - (b.month ?? 0)
       || (a.pending_of ? 1 : 0) - (b.pending_of ? 1 : 0));
   const sourceOf = (code: string | null) => (code ? reference?.sources.find((s) => s.code === code) : undefined);
@@ -279,7 +295,6 @@ export default function IndicesPage() {
   const summaryRow = (key: string, items: PriceIndex[], depth: number, open: boolean, label: ReactNode, count: string) => {
     const vals = items.map((i) => i.value);
     const pending = items.filter((i) => !i.approved);
-    const src = sourceOf(items[0].source_code);
     const ids = items.map((i) => i.id);
     const allSel = ids.every((id) => selected.has(id));
     return (
@@ -289,13 +304,10 @@ export default function IndicesPage() {
         }} /></td>}
         <td style={pad(depth)}><div className="flex items-start"><span className={`mr-2 inline-block shrink-0 leading-5 text-slate-400 transition ${open ? "rotate-90" : ""}`}>›</span><div className={depth ? "text-slate-700" : ""}>{label}</div></div></td>
         <td className="whitespace-nowrap text-slate-600">{count}</td>
-        <td>{items[0].year}</td>
         <td className="whitespace-nowrap text-right font-medium text-slate-900">{formatGrowth(Math.min(...vals))} … {formatGrowth(Math.max(...vals))}</td>
-        <td>{depth ? null : src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline" onClick={(e) => e.stopPropagation()}>{src.name}</a> : items[0].source_code ?? <span className="text-slate-400">не указан</span>}</td>
         <td>{pending.length
           ? <span className="inline-flex whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200">Ждут проверки: {pending.length}</span>
           : <StatusBadge approved />}</td>
-        <td className="text-xs text-slate-600">{!depth && lastMonth ? `Пересчёт до уровня: ${MONTHS[lastMonth - 1]} ${year}` : ""}</td>
         {canEdit && (
           <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>
             {pending.length > 0 && <button className="btn-sec !px-2.5 !py-1" disabled={busy} onClick={() => approve(pending.map((i) => i.id))}>Утвердить все</button>}
@@ -315,7 +327,7 @@ export default function IndicesPage() {
     );
   };
   // Рост по отраслям: раздел ОКВЭД2 (буква) → виды продукции по кодам ОКПД2 (цифры)
-  const colCount = (canEdit ? 2 : 0) + (kt !== "none" ? 1 : 0) + (tab.kind === "to_december" ? 1 : 0) + 5;
+  const colCount = (canEdit ? 2 : 0) + (kt !== "none" ? 1 : 0) + (tab.kind === "to_december" ? 1 : 0) + 2;
   const divOf = (k: string | null) => (k && /^\d{2}/.test(k) ? Number(k.slice(0, 2)) : null);
   const sections = tabKind === "forecast" && reference
     ? reference.okved2.map((sec) => ({
@@ -329,6 +341,9 @@ export default function IndicesPage() {
   const unsectioned = tabKind === "forecast" ? rows.filter((r) => !placed.has(r.id)) : [];
   const renderRow = (ix: PriceIndex, nested = false, label?: ReactNode) => {
     const src = sourceOf(ix.source_code);
+    // Консервативный сценарий — вторым числом в той же строке
+    const twin = hasScenario ? indices.find((o) => o.kind === consKind(tabKind as ScenarioKind) && (o.key ?? null) === (ix.key ?? null) && o.year === ix.year && !o.pending_of) : undefined;
+    const ids = [ix.id, ...(twin && !twin.approved ? [twin.id] : [])];
     return (
                   <tr key={ix.id} className={nested ? "bg-slate-50/60" : ""}>
                     {canEdit && <td><input type="checkbox" checked={selected.has(ix.id)} onChange={() => {
@@ -336,32 +351,18 @@ export default function IndicesPage() {
                     }} /></td>}
                     {kt !== "none" && <td className={nested ? "text-slate-500" : ""}>{label ?? (nested ? "" : kt === "currency" ? ix.key : kt === "region" ? `${reference?.regions.find((r) => r.code === ix.key)?.name ?? ""} (${ix.key})` : reference ? industryLabel(ix.key, reference) : ix.key)}</td>}
                     {tab.kind === "to_december" && <td>{ix.month ? MONTHS[ix.month - 1] : "—"}</td>}
-                    <td>{ix.year}</td>
-                    <td className={`whitespace-nowrap text-right font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</td>
-                    <td>{src ? <a href={src.url} target="_blank" rel="noreferrer" className="text-brand hover:underline">{src.name}</a> : ix.source_code ?? <span className="text-slate-400">не указан</span>}</td>
+                    <td className="whitespace-nowrap text-right" title={[src?.name ?? ix.source_code, ix.doc_title && `${ix.doc_title}${ix.doc_date ? `, одобрен ${ix.doc_date}` : ""}${ix.doc_page ? `, ${ix.doc_page}` : ""}`, ix.note].filter(Boolean).join("\n")}>
+                      <span className={`cursor-help font-medium ${ix.value < 1 ? "text-red-700" : "text-slate-900"}`}>{formatGrowth(ix.value)}</span>
+                      {twin && <span className="block text-xs text-slate-500">конс. {formatGrowth(twin.value)}</span>}
+                    </td>
                     <td>
                       {ix.pending_of ? <span className="inline-flex whitespace-nowrap rounded-md bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-800 ring-1 ring-sky-200">Новая версия</span> : <StatusBadge approved={ix.approved} />}
                       {ix.change_note && <p className="mt-1 text-xs text-slate-500">{ix.change_note}</p>}
-                    </td>
-                    <td className="max-w-xs text-xs text-slate-600">
-                      {ix.note && <p>{ix.note}</p>}
-                      {(() => {
-                        // Прежние утверждённые значения того же индекса — чтобы было видно, откуда изменения
-                        const old = (reference?.indices ?? []).filter((o) => o.superseded_at && o.kind === ix.kind && (o.key ?? null) === (ix.key ?? null) && o.year === ix.year && (o.month ?? null) === (ix.month ?? null))
-                          .sort((a, b) => Date.parse(b.superseded_at!) - Date.parse(a.superseded_at!));
-                        return old.length > 0 && (
-                          <p className="mt-1 text-slate-500">Прежние значения: {old.map((o) => `${formatGrowth(o.value)} (действовало до ${new Date(o.superseded_at!).toLocaleDateString("ru-RU")}${o.doc_title ? `, ${o.doc_title}` : ""})`).join("; ")}</p>
-                        );
-                      })()}
-                      {ix.doc_title && <p title={ix.raw_line ?? undefined} className="cursor-help">
-                        {ix.indicator === "icp" ? "ИЦП" : ix.indicator === "deflator" ? "Дефлятор" : ""}{ix.indicator ? " · " : ""}
-                        {ix.doc_title}{ix.doc_date ? `, одобрен ${ix.doc_date}` : ""}{ix.doc_page ? `, ${ix.doc_page}` : ""}
-                        {ix.ref_deflator ? ` · дефлятор справочно ${formatGrowth(ix.ref_deflator)}` : ""}
-                      </p>}
+                      {twin && !twin.approved && <p className="mt-1 text-xs text-amber-700">конс. ждёт проверки</p>}
                     </td>
                     {canEdit && (
                       <td className="whitespace-nowrap text-right">
-                        {!ix.approved && <button className="btn-sec mr-1 !px-2.5 !py-1" disabled={busy} onClick={() => approve([ix.id])}>Утвердить</button>}
+                        {(!ix.approved || ids.length > 1) && <button className="btn-sec mr-1 !px-2.5 !py-1" disabled={busy} onClick={() => approve(ids)}>Утвердить</button>}
                         <button className="btn-icon mr-1" title="Изменить" onClick={() => openEdit(ix)}><IconEdit width={16} height={16} /></button>
                         <button className="btn-icon" title="Удалить" onClick={() => remove(ix)}><IconTrash width={16} height={16} /></button>
                       </td>
@@ -441,39 +442,62 @@ export default function IndicesPage() {
   return (
     <div className="space-y-4">
       <div className="card space-y-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h1 className="text-xl font-semibold text-slate-900">Индексы роста цен</h1>
-          <button className="text-sm font-medium text-brand hover:underline" onClick={() => setShowSources(true)}>Где взять данные</button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="text-xl font-semibold text-slate-900">Данные для прогноза на</h1>
+            <select aria-label="Год прогноза" className="inp w-auto py-1 text-lg font-semibold" value={target} onChange={(e) => setTargetSel(Number(e.target.value))}>
+              {[...new Set([...targetYears, ...Array.from({ length: thisTarget + 3 - 2015 }, (_, i) => thisTarget + 2 - i)])].sort((x, y) => y - x).map((y) => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-4 text-sm font-medium">
+            <button className="text-brand hover:underline" onClick={() => setShowSources(true)}>Где взять данные</button>
+            <a href="/directories" className="text-brand hover:underline">Справочники →</a>
+          </div>
         </div>
-        <p className="hint">На сколько процентов вырастут цены в следующем году. По этим данным рассчитывается прогноз цен.</p>
-        {canEdit && reference && (
-          <div className="space-y-2">
-            <p className="field-label">Загрузить из официальных источников</p>
-            <div className="grid gap-3 md:grid-cols-3">
-              {([
-                ["Минэкономразвития", "Рост по отраслям, общая инфляция, зарплаты и курс доллара — базовый и консервативный сценарии",
-                  <MerImportButton key="m" reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />],
-                ["Росстат", "Перерасчёт цен договоров по месяцам",
-                  <RosstatImportButton key="r" reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />],
-                ["ФГИС ЦС Минстроя", "Стройка по регионам",
-                  <MinstroyImportButton key="f" reference={reference} targetYear={target} disabled={busy} onDone={afterMinstroy} />],
-              ] as const).map(([t, d, btn]) => (
-                <div key={t} className="flex flex-col justify-between gap-3 rounded-lg border border-slate-200 p-3">
-                  <div><p className="font-medium text-slate-900">{t}</p><p className="hint">{d}</p></div>
-                  <div>{btn}</div>
+        <p className="hint">Четыре источника, из которых считается рост цен. Загрузите новые данные, когда источник подсвечен жёлтым, и утвердите их — после этого прогнозы можно пересчитать.</p>
+        {reference && (
+          <div className="grid gap-3 md:grid-cols-2">
+            {SOURCES.map((src) => {
+              const yr = src.id === "rosstat" ? target - 1 : target;
+              const mine = indices.filter((i) => i.year === yr && src.match(i));
+              const pending = mine.filter((i) => !i.approved);
+              const changed = pending.filter((i) => i.pending_of).length;
+              const st = stale.find((x) => x.id === src.id);
+              const last = mine.map((i) => i.loaded_at).filter(Boolean).sort().pop();
+              const ok = !st && mine.length > 0;
+              return (
+                <div key={src.id} className={`flex flex-col gap-3 rounded-xl border p-4 ${st ? "border-amber-300 bg-amber-50/40" : "border-slate-200"}`}>
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="font-semibold text-slate-900">{src.title}</p>
+                      <span className={`whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-medium ring-1 ${ok ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : st ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-slate-50 text-slate-500 ring-slate-200"}`}>
+                        {ok ? "Актуально" : st ? "Обновить" : "Не используется"}
+                      </span>
+                    </div>
+                    <p className="hint">{src.what}</p>
+                    <p className="mt-1 text-sm text-slate-700">
+                      {st ? <span className="text-amber-800">{st.reason[0].toUpperCase() + st.reason.slice(1)}.</span>
+                        : last ? `Загружено ${new Date(last).toLocaleDateString("ru-RU")} · ${mine.length} ${plural(mine.length, "значение", "значения", "значений")}` : "Пока не загружали — не обязательно."}
+                    </p>
+                  </div>
+                  {pending.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900 ring-1 ring-amber-200">
+                      <span className="mr-auto">Ждут проверки: {pending.length}{changed ? `, из них изменились ${changed}` : ""}</span>
+                      <button className="text-amber-900 underline-offset-2 hover:underline" onClick={() => { setTabKind(src.tab); setOnlyPending(true); setShowAll(true); setTimeout(() => document.getElementById("all-indices")?.scrollIntoView({ behavior: "smooth" }), 50); }}>Посмотреть</button>
+                      {canEdit && <button className="btn !px-3 !py-1" disabled={busy} onClick={() => approve(pending.map((i) => i.id))}><IconCheck width={16} height={16} />Утвердить все</button>}
+                    </div>
+                  )}
+                  {canEdit && <div>
+                    {src.id === "mer" && <MerImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMer} />}
+                    {src.id === "cbr" && <CbrField reference={reference} year={target} onDone={async (m) => { setNotice(m); await reload(); }} />}
+                    {src.id === "rosstat" && <RosstatImportButton reference={reference} baseYear={target - 1} disabled={busy} onDone={afterRosstat} />}
+                    {src.id === "minstroy" && <MinstroyImportButton reference={reference} targetYear={target} disabled={busy} onDone={afterMinstroy} />}
+                  </div>}
                 </div>
-              ))}
-            </div>
+              );
+            })}
           </div>
         )}
-        <div className="space-y-2 border-t border-slate-200 pt-3">
-          <p className="field-label">Свой файл и выгрузка — все виды индексов в одной таблице Excel</p>
-          <div className="flex flex-wrap items-center gap-2">
-            {canEdit && <UploadButton busy={busy} onFile={upload} />}
-            <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать все индексы</button>
-            <button className="text-sm text-brand underline-offset-2 hover:underline" onClick={() => downloadWorkbook(indexTemplate([], reference?.sources), "Шаблон индексов.xlsx")}>Пустой шаблон для своего файла</button>
-          </div>
-        </div>
         {notice && (
           <div className="flex items-start justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
             <span>{notice}</span>
@@ -505,29 +529,25 @@ export default function IndicesPage() {
       </div>
 
 
-      <div className="card space-y-4">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="font-medium text-slate-900">Год прогноза:</span>
-          {targetYears.map((y) => (
-            <button key={y} type="button" onClick={() => setTargetSel(y)}
-              className={`rounded-lg border px-3 py-1 ${y === target ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-              {y}{y < thisTarget && <span className="ml-1 text-xs text-slate-400">архив</span>}
-            </button>
-          ))}
-          <select aria-label="Другой год" className="inp w-auto py-1 text-sm" value="" onChange={(e) => e.target.value && setTargetSel(Number(e.target.value))}>
-            <option value="">Другой год…</option>
-            {Array.from({ length: thisTarget + 3 - 2015 }, (_, i) => thisTarget + 2 - i).filter((y) => !targetYears.includes(y)).map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <span className="hint">{target < thisTarget
-            ? `Индексы на ${target} год и пересчёт по месяцам за ${target - 1} — например, для прошлых прогнозов или проверки точности. Загрузки выше сохраняются в этот год.`
-            : `Индексы на ${target} год и пересчёт по месяцам за ${target - 1}. Загрузки выше сохраняются в этот год.`}</span>
+      <div id="all-indices" className="card space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <button type="button" onClick={() => setShowAll(!showAll)} className="flex items-center gap-2 text-left text-lg font-semibold text-slate-900 hover:text-brand">
+            <span className={`text-slate-400 transition ${showAll ? "rotate-90" : ""}`}>›</span>Все индексы на {target} год
+            <span className="text-sm font-normal text-slate-500">по отраслям, инфляция, зарплаты, курс, стройка, пересчёт по месяцам</span>
+          </button>
+          {showAll && <div className="flex flex-wrap items-center gap-2">
+            {canEdit && <UploadButton busy={busy} onFile={upload} />}
+            <button className="btn-sec" disabled={!reference} onClick={() => reference && downloadWorkbook(indexTemplate(indices, reference.sources), "Индексы роста цен.xlsx")}><IconDownload />Скачать в Excel</button>
+            <button className="text-sm text-brand underline-offset-2 hover:underline" onClick={() => downloadWorkbook(indexTemplate([], reference?.sources), "Шаблон индексов.xlsx")}>Пустой шаблон</button>
+          </div>}
         </div>
+        {showAll && <>
         {pendingTotal > 0 && (
           <button onClick={() => {
             const next = !onlyPending; setOnlyPending(next);
             if (next && !indices.some((i) => i.kind === kind && !i.approved)) {
               const k = indices.find((i) => !i.approved)!.kind;
-              setCons(k.endsWith("_cons")); setTabKind(k.replace(/_cons$/, "") as IndexKind);
+              setTabKind(k.replace(/_cons$/, "") as IndexKind);
             }
           }} className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium ring-1 transition ${onlyPending ? "bg-amber-100 text-amber-900 ring-amber-300" : "bg-amber-50 text-amber-800 ring-amber-200 hover:bg-amber-100"}`}>
             {pendingTotal} {plural(pendingTotal, "индекс ждёт", "индекса ждут", "индексов ждут")} проверки
@@ -555,18 +575,6 @@ export default function IndicesPage() {
         </div>
         <h2 className="text-lg font-semibold text-slate-900">{tab.title}</h2>
 
-        {hasScenario && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-slate-600">Сценарий МЭР:</span>
-            {([[false, "Базовый"], [true, "Консервативный"]] as const).map(([c, l]) => (
-              <button key={l} type="button" onClick={() => { setCons(c); }}
-                className={`rounded-lg border px-3 py-1 ${cons === c ? "border-brand bg-brand-light text-brand" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                {l} <span className="text-xs text-slate-400">{indices.filter((i) => i.kind === (c ? consKind(tabKind as ScenarioKind) : tabKind) && i.year === year && (!onlyPending || !i.approved)).length}</span>
-              </button>
-            ))}
-            <span className="hint max-w-3xl">Минэкономразвития публикует два варианта прогноза. <b>Базовый</b> — основной, самый вероятный: по нему считается прогноз цен. <b>Консервативный</b> — на случай, если экономика пойдёт хуже (слабее рубль, выше инфляция); показывается вторым вариантом в карточке позиции и в отчёте, чтобы был виден запас.</span>
-          </div>
-        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="space-y-2">
             <p className="hint max-w-3xl">{tabKind === "to_december" && lastMonth
@@ -606,11 +614,8 @@ export default function IndicesPage() {
                 {canEdit && <th className="w-8"><input type="checkbox" checked={allChecked} onChange={() => setSelected(allChecked ? new Set() : new Set(rows.map((r) => r.id)))} /></th>}
                 {kt !== "none" && <th>{KEY_TITLE[kt]}</th>}
                 {tab.kind === "to_december" && <th>Месяц договора</th>}
-                <th>Год</th>
-                <th className="text-right">Рост</th>
-                <th>Источник</th>
+                <th className="text-right">Рост{hasScenario ? " (базовый / конс.)" : ""}</th>
                 <th>Статус</th>
-                <th>Примечание</th>
                 {canEdit && <th className="w-40" />}
               </tr>
             </thead>
@@ -655,6 +660,7 @@ export default function IndicesPage() {
           </table>
         </div>
         )}
+        </>}
       </div>
 
       {showSources && (

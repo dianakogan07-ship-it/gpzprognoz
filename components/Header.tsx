@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { IconLogout } from "./Icons";
 
-const NAV = [["/", "Прогнозы"], ["/indices", "Индексы роста"], ["/directories", "Справочники"], ["/logic", "Логика расчётов"]];
+const NAV = [["/", "Прогнозы"], ["/indices", "Данные"], ["/logic", "Как считаем"]];
 
 export function Header() {
   const path = usePathname();
@@ -22,7 +22,7 @@ export function Header() {
         </Link>
         {NAV.map(([href, label]) => (
           <Link key={href} href={href}
-            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${path === href || (href === "/" && path.startsWith("/forecasts")) ? "bg-brand-light text-brand" : "text-slate-600 hover:bg-slate-100"}`}>{label}</Link>
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${path === href || (href === "/" && path.startsWith("/forecasts")) || (href === "/indices" && path.startsWith("/directories")) ? "bg-brand-light text-brand" : "text-slate-600 hover:bg-slate-100"}`}>{label}</Link>
         ))}
         <button className="btn-sec ml-auto !px-3" onClick={logout} title="Выйти"><IconLogout /><span className="hidden sm:inline">Выйти</span></button>
       </nav>

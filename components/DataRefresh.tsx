@@ -35,13 +35,13 @@ export function DataRefresh({ reference, year, baseYear, stale, onClose, onDone 
           </li>
         ))}
       </ul>
-      <p className="hint">Загруженные значения попадают на проверку: утвердите их в разделе «Индексы роста», затем пересчитайте прогноз кнопкой «Новые индексы — пересчитать?» на его карточке.</p>
+      <p className="hint">Загруженные значения попадают на проверку: утвердите их в разделе «Данные», затем пересчитайте прогноз кнопкой «Новые индексы — пересчитать?» на его карточке.</p>
     </Modal>
   );
 }
 
 /** Прогноз инфляции Банка России: ввести новое значение или подтвердить, что текущее не изменилось */
-function CbrField({ reference, year, onDone }: { reference: Reference; year: number; onDone: (m: string) => Promise<void> }) {
+export function CbrField({ reference, year, onDone }: { reference: Reference; year: number; onDone: (m: string) => Promise<void> }) {
   const cur = reference.indices.find((i) => i.kind === "cpi" && i.year === year && isActiveIndex(i));
   const [pct, setPct] = useState("");
   const [busy, setBusy] = useState(false);
@@ -50,7 +50,7 @@ function CbrField({ reference, year, onDone }: { reference: Reference; year: num
     setBusy(true); setError(null);
     try {
       await api("/api/dict/price_indices/bulk", "POST", { rows: [{ kind: "cpi", key: null, year, month: null, value, source_code: "CBR", approved: value === cur?.value ? cur.approved : false, note }] });
-      await onDone(value === cur?.value ? "Прогноз инфляции подтверждён" : "Прогноз инфляции обновлён — утвердите его в разделе «Индексы роста»");
+      await onDone(value === cur?.value ? "Прогноз инфляции подтверждён" : "Прогноз инфляции обновлён — утвердите его в разделе «Данные»");
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     setBusy(false);
   }

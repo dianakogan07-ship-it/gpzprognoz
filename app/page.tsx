@@ -10,7 +10,7 @@ import { exportVersion } from "@/lib/forecasts/client";
 import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
 import { COLOR_CLASS, EditCard, HEAD } from "@/components/EditCard";
 import { DataRefresh } from "@/components/DataRefresh";
-import { staleness, type Stale } from "@/lib/freshness";
+import { staleness } from "@/lib/freshness";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { plural } from "@/lib/forecastView";
 
@@ -20,7 +20,7 @@ const NBSP = "\u00a0";
 const numRu = (n: number, d = 0) => n.toLocaleString("ru-RU", { minimumFractionDigits: d, maximumFractionDigits: d }).replace(/\s/g, NBSP);
 const pctSigned = (g: number) => `${g < 0 ? "−" : "+"}${numRu(Math.abs(g), 1)}${NBSP}%`;
 
-function Card({ c, onAction, stale }: { c: ForecastCard; onAction: (c: ForecastCard, a: string) => void; stale: Stale[] }) {
+function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a: string) => void }) {
   const router = useRouter();
   const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
   const archived = c.status === "archived";
@@ -46,24 +46,10 @@ function Card({ c, onAction, stale }: { c: ForecastCard; onAction: (c: ForecastC
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-4 px-5 py-4">
-        {stale.length > 0 && (
-          <button className="flex items-start gap-2 self-stretch rounded-md bg-amber-50 px-3 py-2 text-left text-xs text-amber-900 ring-1 ring-amber-200 hover:bg-amber-100"
-            onClick={(e) => { e.stopPropagation(); onAction(c, "refresh"); }}>
-            <span aria-hidden>⏰</span>
-            <span><b>Данные устарели — обновить</b><span className="block text-amber-800">{stale.map((x) => x.title).join(", ")}</span></span>
-          </button>
-        )}
-        {c.newIndices && (
-          <button className="self-start rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800 ring-1 ring-amber-200 hover:bg-amber-100"
-            onClick={(e) => { e.stopPropagation(); onAction(c, "recalc"); }}>Новые индексы — пересчитать?</button>
-        )}
         <div className="grid grid-cols-2 gap-2">
           <Tile value={pctSigned(s.growth)} label="рост цен" tone={s.growth < 0 ? "text-red-700" : undefined} />
-          <Tile value={numRu(s.contracts)} label={`${plural(s.contracts, "договор", "договора", "договоров")} ${c.base_year} в основе`} />
-          <Tile value={s.subjects ? numRu(s.subjects) : numRu(s.items)} label={plural(s.subjects || s.items, "предмет закупки", "предмета закупки", "предметов закупки")}
-            href={`/forecasts/${c.id}?group=subject`} />
-          <Tile value={s.categories ? numRu(s.categories) : "—"} label={plural(s.categories ?? 0, "категория", "категории", "категорий")}
-            href={`/forecasts/${c.id}?group=category`} title={s.categories ? undefined : "В файлах нет категорий"} />
+          <Tile value={numRu(s.subjects || s.items)} label={plural(s.subjects || s.items, "предмет закупки", "предмета закупки", "предметов закупки")}
+            note={s.needsReview - s.reviewed > 0 ? `проверить: ${s.needsReview - s.reviewed}` : undefined} href={`/forecasts/${c.id}?group=subject`} />
         </div>
       </div>
     </div>
@@ -139,6 +125,15 @@ export default function ForecastsPage() {
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
   }
 
+  async function recalcAll(list: ForecastCard[]) {
+    if (!confirm(`Пересчитать по новым индексам: ${list.map((c) => `«${c.title}»`).join(", ")}? У каждого прогноза появится новая версия.`)) return;
+    setMsg(null);
+    try {
+      for (const c of list) await api(`/api/forecasts/${c.id}/recalc`, "POST");
+      setMsg(`Пересчитано прогнозов: ${list.length}`); await load();
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -164,6 +159,26 @@ export default function ForecastsPage() {
           {years.map((y) => <option key={y} value={y}>{y}</option>)}
         </select>
       </div>
+      {tab === "active" && (() => {
+        const act = (cards ?? []).filter((c) => c.status !== "archived" && c.status !== "rejected");
+        const near = act.length ? act.reduce((m, c) => (c.year > new Date().getFullYear() && (m.year <= new Date().getFullYear() || c.year < m.year) ? c : m), act[0]) : null;
+        const st = near && reference ? staleness(reference.indices, near.year, near.base_year) : [];
+        const recalc = act.filter((c) => c.newIndices && c.status !== "approved");
+        return <>
+          {st.length > 0 && near && (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200">
+              <span className="mr-auto"><b>Пора обновить данные для прогноза на {near.year}:</b> {st.map((x) => x.title.toLowerCase()).join(", ")}</span>
+              <button className="btn !py-1.5" onClick={() => setRefreshFor(near)}>Обновить</button>
+            </div>
+          )}
+          {recalc.length > 0 && (
+            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-brand-light/60 px-4 py-3 text-sm text-slate-800 ring-1 ring-brand/20">
+              <span className="mr-auto"><b>Утверждены новые индексы.</b> {recalc.length === 1 ? `Прогноз «${recalc[0].title}» можно пересчитать.` : `${recalc.length} ${plural(recalc.length, "прогноз", "прогноза", "прогнозов")} можно пересчитать.`}</span>
+              <button className="btn !py-1.5" onClick={() => recalcAll(recalc)}>Пересчитать</button>
+            </div>
+          )}
+        </>;
+      })()}
       {msg && <p className="text-sm text-slate-700">{msg}</p>}
       {db === false && <div className="card text-sm text-amber-800">Чтобы сохранять прогнозы, подключите базу данных в настройках проекта на Vercel.</div>}
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -176,7 +191,7 @@ export default function ForecastsPage() {
         </div>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {shown.map((c) => <Card key={c.id} c={c} onAction={onAction} stale={c.status === "archived" || !reference ? [] : staleness(reference.indices, c.year, c.base_year)} />)}
+        {shown.map((c) => <Card key={c.id} c={c} onAction={onAction} />)}
       </div>
 
       {refreshFor && reference && (
