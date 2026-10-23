@@ -4,7 +4,7 @@ import { Modal } from "./Modal";
 import { api } from "./useReference";
 import { IconUpload } from "./Icons";
 import { MONTHS, formatGrowth, industryName } from "@/lib/indexFormat";
-import { MONTHS_GEN, ROSSTAT_KIND_TITLE, parseRosstatIcp, toDecemberRows, type RosstatParse } from "@/lib/rosstat";
+import { MONTHS_GEN, ROSSTAT_KIND_TITLE, parseRosstatIcp, rosstatYears, toDecemberRows, type RosstatParse } from "@/lib/rosstat";
 import type { Reference } from "@/lib/types";
 
 const CHUNK = 500;
@@ -29,7 +29,13 @@ export function RosstatImportButton({ reference, baseYear, onDone, disabled }: {
       setBusy(`Чтение: ${f.name}…`);
       // Файлы большие — даём браузеру отрисовать подпись до разбора
       await new Promise((r) => setTimeout(r, 30));
-      try { ok.push({ ...parseRosstatIcp(await f.arrayBuffer(), baseYear), file: f.name }); }
+      try {
+        // В файле обычно несколько лет — загружаем все: прошлые годы нужны для проверки точности прошлых прогнозов
+        const buf = await f.arrayBuffer();
+        const years = rosstatYears(buf);
+        if (years.length > 1) for (const y of years) ok.push({ ...parseRosstatIcp(buf, y), file: f.name });
+        else ok.push({ ...parseRosstatIcp(buf, baseYear), file: f.name });
+      }
       catch (e) { bad.push({ file: f.name, error: e instanceof Error ? e.message : String(e) }); }
     }
     setBusy(null);
@@ -69,9 +75,9 @@ export function RosstatImportButton({ reference, baseYear, onDone, disabled }: {
       </label>
       {error && !parsed && <span className="text-sm text-red-600">{error}</span>}
       {parsed && (
-        <Modal wide title="Предпросмотр индексов Росстата" subtitle={`Пересчёт цен договоров внутри ${parsed[0].year} года`} onClose={() => setParsed(null)}
+        <Modal wide title="Предпросмотр индексов Росстата" subtitle={`Пересчёт цен договоров внутри года · ${[...new Set(parsed.map((p) => p.year))].sort().join(", ")}`} onClose={() => setParsed(null)}
           footer={<>
-            <span className="mr-auto self-center text-sm text-slate-600">{parsed.length} {parsed.length === 1 ? "файл" : "файла"} · {total} коэффициентов по месяцам</span>
+            <span className="mr-auto self-center text-sm text-slate-600">{(() => { const f = new Set(parsed.map((p) => p.file)).size, y = new Set(parsed.map((p) => p.year)).size; return `${f} ${f === 1 ? "файл" : f < 5 ? "файла" : "файлов"} · ${y} ${y === 1 ? "год" : y < 5 ? "года" : "лет"}`; })()} · {total} коэффициентов по месяцам</span>
             <button className="btn-sec" onClick={() => setParsed(null)}>Отмена</button>
             <button className="btn" disabled={!!busy || !total} onClick={save}>{busy ?? "Сохранить на проверку"}</button>
           </>}>

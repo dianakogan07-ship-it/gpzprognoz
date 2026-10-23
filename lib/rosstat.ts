@@ -85,6 +85,14 @@ function contents(wb: XLSX.WorkBook): { sheet: string; year: number }[] {
   return out.filter((x) => wb.SheetNames.includes(x.sheet) || wb.SheetNames.includes(`${x.sheet}.`));
 }
 
+/** Годы, за которые в файле есть листы с накопленными индексами (по «Содержанию»), — от новых к старым */
+export function rosstatYears(buf: ArrayBuffer): number[] {
+  const names = XLSX.read(buf, { type: "array", bookSheets: true }).SheetNames;
+  const head = XLSX.read(buf, { type: "array", sheets: [names[0]] });
+  head.SheetNames = names;
+  return [...new Set(contents(head).map((x) => x.year))].sort((a, b) => b - a);
+}
+
 /**
  * Файлы Росстата раздела «Цены производителей»: промышленные товары (по видам деятельности),
  * строительная продукция, грузовые перевозки, услуги связи. Берём лист с накопленным
