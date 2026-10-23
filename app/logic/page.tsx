@@ -96,7 +96,8 @@ export default function LogicPage() {
     api(`/api/items/${rowId}`, "GET").then(setItem).catch((e) => setItemError(e instanceof Error ? e.message : String(e)));
   }, [rowId]);
 
-  const reserve = useReserve(item ? item.base_year : target - 1);
+  // В общем примере — надбавка по всем загруженным годам, чтобы шаг был виден на живой цифре
+  const reserve = useReserve(item ? item.base_year : 9999);
   const ex = useMemo(() => (reference ? (item ? fromItem(item, reference) : fromExample(reference, target)) : null), [reference, item, target]);
 
   function toggle(n: number) {
@@ -112,7 +113,10 @@ export default function LogicPage() {
   const m0 = ex.months[0] ?? null;
   const industry = plain(s3.idx?.key ?? ex.okpd2, reference);
   const resCat = item?.data.category && reserve?.byCat[item.data.category] != null ? item.data.category : null;
-  const res = reserve ? (resCat ? reserve.byCat[resCat] : reserve.overall) : null;
+  const real = reserve ? (resCat ? reserve.byCat[resCat] : reserve.overall) : null;
+  // В примере без своей позиции и без истории надбавки берём условные 10 %, чтобы было видно, как она работает
+  const demoRes = !item && !real;
+  const res = demoRes ? 10 : real;
   const sgn = (x: number) => `${x < 0 ? "−" : "+"}${Math.abs(x).toFixed(1).replace(".", ",")} %`;
 
   // Шаг 2: рост внутри года
@@ -134,10 +138,10 @@ export default function LogicPage() {
       info: <>{ex.vatFile != null ? `В ГПЗ указана ставка ${Math.round(ex.vatFile * 1000) / 10} % — без подтверждения применена ${Math.round(DEFAULT_VAT * 100)} %.` : ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{" "}
         Итого рост = (1 + рост шага 2) × (1 + рост шага 3) − 1: второй рост начисляется на уже выросшую цену.{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
       what: "Получаем прогноз сразу в двух видах: без НДС и с НДС по ставке из строки ГПЗ.", tab: null },
-    { n: 5, value: res != null ? sgn(res) : "нет данных", caption: res != null ? `надбавка закупщиков${resCat ? ` · «${resCat}»` : " · по всему ГПЗ"}` : "загрузите ГПЗ и отчётность прошлых лет",
-      info: <>{reserve ? `По годам: ${reserveYearsText(reserve)}. ` : ""}Считается в разделе «Точность»: для каждой закупки — НМЦ из ГПЗ против цены заключённого договора, медиана за год, затем среднее по годам.</>,
+    { n: 5, value: res != null ? sgn(res) : "нет данных", caption: demoRes ? "условная надбавка для примера — у вас пока нет истории ГПЗ и отчётности" : res != null ? `надбавка закупщиков${resCat ? ` · «${resCat}»` : " · по всему ГПЗ"}` : "загрузите ГПЗ и отчётность прошлых лет",
+      info: <>{reserve && !demoRes ? `По годам: ${reserveYearsText(reserve)}. ` : ""}Считается в разделе «Точность»: для каждой закупки — НМЦ из ГПЗ против цены заключённого договора, медиана за год, затем среднее по годам.</>,
       what: "Смотрим прошлые годы: на сколько процентов НМЦ в ГПЗ была выше цены, за которую в итоге заключили договор. Это запас на торги, который закупщики закладывают в план.", tab: null },
-    { n: 6, value: rub(ex.forecastPrice * (1 + (res ?? 0) / 100)), sub: `${rub(ex.forecastPrice * (1 + (res ?? 0) / 100) * (1 + ex.vat))} с НДС`, caption: `рекомендуемая НМЦ ${ty}: прогноз цены ${res != null ? sgn(res) : "+0 %"} надбавки`,
+    { n: 6, value: rub(ex.forecastPrice * (1 + (res ?? 0) / 100)), sub: `${rub(ex.forecastPrice * (1 + (res ?? 0) / 100) * (1 + ex.vat))} с НДС`, caption: `${rub(ex.forecastPrice)} × (1\u00a0${res != null && res < 0 ? "−" : "+"}\u00a0${Math.abs(res ?? 0).toFixed(1).replace(".", ",")}\u00a0%), итого к цене договора ${pct(ex.forecastPrice * (1 + (res ?? 0) / 100) / ex.price)}`,
       info: <>Рекомендуемая НМЦ = прогноз цены (шаг 04) × (1 + надбавка). Надбавка начисляется на уже выросшую цену — так же, как в прошлые годы она считалась от фактической цены договора.</>,
       what: "Итог для ГПЗ: цена договора, выросшая по индексам, плюс обычная для закупщиков надбавка. Эту цифру закупщик ставит в план как НМЦ.", tab: null },
   ];
@@ -194,7 +198,7 @@ export default function LogicPage() {
         <p className="text-sm text-slate-600">
           {ex.row
             ? <>Позиция «{ex.row.subject}» из прогноза <Link href={`/forecasts/${ex.row.forecastId}`} className="text-brand hover:underline">{ex.row.title}</Link>. <Link href="/logic" className="text-brand hover:underline">Общий пример</Link></>
-            : <>Пример на договоре {m0 ? MONTHS_GEN_OF(m0) : ""} {by}, {industry}. Расчёт своей позиции — кнопка «Как посчитано» в таблице прогноза.</>}
+            : <>Пример на договоре {m0 ? MONTHS_GEN_OF(m0) : ""} {by}, {industry}. {demoRes ? " Надбавка 10 % — условная, для примера." : reserve ? ` Надбавка — средняя по всему ГПЗ за ${reserve.years.map((y) => y.year).join(", ")}.` : ""} Расчёт своей позиции — кнопка «Как посчитано» в таблице прогноза.</>}
         </p>
       </div>
     </div>
