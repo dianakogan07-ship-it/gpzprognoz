@@ -9,6 +9,8 @@ import { MinstroyImportButton } from "./MinstroyImport";
 import { FRESH_RULE, type Stale } from "@/lib/freshness";
 import { formatGrowth } from "@/lib/indexFormat";
 import { isActiveIndex, type Reference } from "@/lib/types";
+import { IconUpload } from "./Icons";
+import type { CbrSurvey } from "@/lib/cbr";
 
 /** Окно «Данные устарели»: по каждому источнику — почему пора обновить и кнопка загрузки (для инфляции ЦБ — поле) */
 export function DataRefresh({ reference, year, baseYear, stale, onClose, onDone }: {
@@ -56,9 +58,39 @@ export function CbrField({ reference, year, onDone }: { reference: Reference; ye
   }
   const n = Number(pct.replace(",", ".").replace("−", "-"));
   const date = new Date().toLocaleDateString("ru-RU");
+  const [survey, setSurvey] = useState<CbrSurvey | null>(null);
+  async function onFile(f: File) {
+    setBusy(true); setError(null); setSurvey(null);
+    try {
+      const { pdfToPages } = await import("@/lib/mer/pdf");
+      const { parseCbrSurvey } = await import("@/lib/cbr");
+      setSurvey(parseCbrSurvey(await pdfToPages(new Uint8Array(await f.arrayBuffer()))));
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    setBusy(false);
+  }
+  const sv = survey?.cpiAvg[year];
+  const isFact = !!survey?.facts.includes(year);
   return (
     <div className="space-y-2 text-sm">
-      <p className="text-slate-600">Откройте <a className="text-brand hover:underline" href="https://www.cbr.ru/statistics/ddkp/mo_br/" target="_blank" rel="noreferrer">макроэкономический опрос Банка России</a> → таблица результатов → строка «Инфляция, в среднем за год», колонка {year}, медиана. Не ключевая ставка, не инфляция за месяц и не цель 4 %.{cur ? ` Сейчас в сервисе: ${formatGrowth(cur.value)}.` : ""}</p>
+      <p className="text-slate-600">Скачайте на сайте <a className="text-brand hover:underline" href="https://www.cbr.ru/statistics/ddkp/mo_br/" target="_blank" rel="noreferrer">макроэкономический опрос Банка России</a> в PDF и загрузите его — сервис сам возьмёт инфляцию в среднем за год на {year}. Для прошлых лет берите опрос, вышедший осенью предыдущего года.</p>
+      <label className={`btn-sec cursor-pointer ${busy ? "pointer-events-none opacity-50" : ""}`}><IconUpload />{busy ? "Разбор файла…" : "Загрузить опрос (PDF)"}
+        <input type="file" accept=".pdf" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFile(f); }} />
+      </label>
+      {survey && (
+        <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+          <p className="text-slate-700">Опрос {survey.date ? `от ${survey.date}` : "Банка России"}. Инфляция в среднем за год на {year}:{" "}
+            <b className="text-slate-900">{sv != null ? `${String(sv).replace(".", ",")} %` : "нет в файле"}</b>
+            {survey.cpiAvgPrev[year] != null && <span className="text-slate-500"> (в прошлом опросе {String(survey.cpiAvgPrev[year]).replace(".", ",")} %)</span>}</p>
+          {isFact && <p className="text-amber-800">В этом опросе {year} год — уже факт, а не прогноз. Для прогноза на {year} загрузите опрос, вышедший осенью {year - 1} года.</p>}
+          {sv != null && (
+            <div className="flex gap-2">
+              <button className="btn !py-1.5" disabled={busy} onClick={async () => { await save(Math.round((1 + sv / 100) * 100000) / 100000, `Макроэкономический опрос Банка России${survey.date ? ` от ${survey.date}` : ""}: инфляция в среднем за год, медиана${isFact ? " (факт)" : ""}`); setSurvey(null); }}>Сохранить {String(sv).replace(".", ",")} %</button>
+              <button className="btn-sec !py-1.5" onClick={() => setSurvey(null)}>Отмена</button>
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-xs text-slate-500">Или введите значение вручную{cur ? ` (сейчас в сервисе ${formatGrowth(cur.value)})` : ""}:</p>
       <div className="flex flex-wrap items-center gap-2">
         <input className="inp w-28 py-1.5" inputMode="decimal" placeholder="например, 4,2" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Инфляция, %" />
         <span className="text-slate-500">%</span>
