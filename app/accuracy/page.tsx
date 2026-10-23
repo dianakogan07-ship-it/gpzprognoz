@@ -3,6 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/components/useReference";
 import { MIN_REPEATS, type AccuracyYear } from "@/lib/forecasts/accuracy";
+import { useReserve } from "@/components/NmcSummary";
 
 const NBSP = " ";
 const num = (x: number) => Math.abs(x).toLocaleString("ru-RU", { maximumFractionDigits: 1 });
@@ -21,8 +22,8 @@ export default function AccuracyPage() {
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Точность прогнозов</h1>
         <p className="hint mt-1 max-w-3xl">
-          <b>Ручной прогноз</b> — цена, которую закупщик заложил в ГПЗ (НМЦ), против цены, за которую заключили договор.
-          <b> Прогноз системы</b> — рост, который сервис посчитал по договорам прошлого года и данным ЦБ, МЭР и Росстата; проверяется на закупках, которые повторяются из года в год.
+          Насколько закупщики ошибаются, планируя НМЦ, и насколько точен прогноз системы. <b>Надбавка закупщиков</b> — на сколько НМЦ в ГПЗ была выше цены заключённого договора; средняя надбавка прошлых лет входит в рекомендуемую НМЦ на следующий год.
+          <b> Ошибка системы</b> проверяется на закупках, которые повторяются из года в год.
         </p>
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
@@ -42,9 +43,11 @@ function YearView({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
   const [allLots, setAllLots] = useState(false);
   const [allRep, setAllRep] = useState(false);
   const enough = r.n >= MIN_REPEATS;
+  const reserve = useReserve(y.year);
   // Ошибка ручного — на тех же закупках, что и у системы; если их нет — по всем закупкам года
-  const manualErr = r.compared ? r.manualError : m.typical;
-  const sysErr = r.n ? r.systemError : null;
+  // Пока повторяющихся закупок мало, систему не оцениваем: одна-две закупки — случайность
+  const manualErr = enough && r.compared ? r.manualError : m.typical;
+  const sysErr = enough ? r.systemError : null;
   const verdict = manualErr == null || sysErr == null ? null
     : Math.abs(manualErr - sysErr) < 1 ? "Система и ручной прогноз ошибаются одинаково."
     : sysErr < manualErr ? `Система точнее ручного прогноза на ${num(manualErr - sysErr)} п. п.${r.compared ? ` — ближе к факту в ${r.systemCloser} из ${r.compared} ${plural(r.compared, "закупки", "закупок", "закупок")}.` : ""}`
@@ -67,14 +70,15 @@ function YearView({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <Tile value={signed(r.n ? r.fact : null)} label={`Прирост цен по итогам ${y.year} года`} strong />
-        <Tile value={pct(manualErr)} label="Ошибка ручного прогноза (НМЦ в ГПЗ)" />
-        <Tile value={pct(sysErr)} label="Ошибка прогноза системы" />
+        <Tile value={signed(m.median)} label={`Надбавка закупщиков в ${y.year}: на столько НМЦ в ГПЗ была выше договора`} strong />
+        <Tile value={pct(manualErr)} label="Ошибка ручного прогноза: на сколько НМЦ отличается от договора по одной закупке" />
+        <Tile value={sysErr != null ? pct(sysErr) : "—"} label={sysErr != null ? "Ошибка прогноза системы" : `Ошибка системы: проверить не на чем — одинаковых закупок в ${y.year - 1} и ${y.year} годах ${r.n ? `только ${r.n}` : "нет"}, нужно хотя бы ${MIN_REPEATS}`} />
       </div>
 
       <div className="rounded-xl bg-brand-light/50 px-4 py-3 text-sm text-slate-800 ring-1 ring-brand/20">
-        <b>Вывод: </b>{verdict ?? "сравнить пока нельзя — не хватает данных (см. ниже)."}
-        {r.n > 0 && <span className="text-slate-600"> Закупщики заложили {signed(r.manualGrowth)}, система предсказала {signed(r.systemGrowth)}, по факту {signed(r.fact)}.</span>}
+        <b>Вывод: </b>{verdict ?? (m.median != null ? `закупщики в ${y.year} году закладывали НМЦ в среднем на ${pct(Math.abs(m.median))} ${m.median >= 0 ? "выше" : "ниже"} итоговых договоров.` : "сравнить пока нельзя — не хватает данных.")}
+        {reserve?.overall != null && <span className="text-slate-600"> Средняя надбавка за {reserve.years.map((x) => x.year).join(", ")} — {signed(reserve.overall)}: она входит в рекомендуемую НМЦ на {y.year + 1} год.</span>}
+        {enough && <span className="text-slate-600"> Закупщики заложили {signed(r.manualGrowth)}, система предсказала {signed(r.systemGrowth)}, по факту {signed(r.fact)}.</span>}
       </div>
       {notes.length > 0 && <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-500">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
 
@@ -98,10 +102,10 @@ function YearView({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
 
       {m.byCat.length > 0 && (
         <div>
-          <p className="text-sm font-semibold text-slate-900">Запас на торги по категориям — на столько НМЦ в ГПЗ {y.year} была выше договора</p>
-          <p className="hint">Медиана по закупкам. Средний запас за прошлые годы добавляется к прогнозу как «рекомендуемая НМЦ» на странице прогноза.</p>
+          <p className="text-sm font-semibold text-slate-900">Надбавка закупщиков по категориям — на столько НМЦ в ГПЗ {y.year} была выше договора</p>
+          <p className="hint">Медиана по закупкам. Средняя надбавка за прошлые годы входит в рекомендуемую НМЦ по этой категории.</p>
           <table className="tbl mt-1">
-            <thead><tr><th>Категория</th><th className="text-right">Закупок</th><th className="text-right">Запас на торги</th></tr></thead>
+            <thead><tr><th>Категория</th><th className="text-right">Закупок</th><th className="text-right">Надбавка</th></tr></thead>
             <tbody>{m.byCat.map((c) => <tr key={c.category}><td>{c.category}</td><td className="text-right text-slate-600">{c.n}</td><td className="text-right font-medium">{signed(c.reserve)}</td></tr>)}</tbody>
           </table>
         </div>
