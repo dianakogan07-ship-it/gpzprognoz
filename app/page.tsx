@@ -91,13 +91,12 @@ export default function ForecastsPage() {
 
   const years = useMemo(() => [...new Set((cards ?? []).map((c) => c.year))].sort(), [cards]);
   const shown = useMemo(() => {
-    const now = new Date().getFullYear();
     const list = (cards ?? []).filter((c) => (tab === "archive" ? c.status === "archived" : c.status !== "archived") && (!year || c.year === Number(year)));
     return list.sort((a, b) =>
       sort === "updated" ? b.updated_at.localeCompare(a.updated_at)
       : sort === "status" ? STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) || a.year - b.year
-      // Ближайшие: сначала будущие годы по возрастанию, затем прошедшие от недавних
-      : (a.year >= now ? 0 : 1) - (b.year >= now ? 0 : 1) || (a.year >= now ? a.year - b.year : b.year - a.year) || b.updated_at.localeCompare(a.updated_at));
+      // По году прогноза: сначала новые (2027, 2026, 2025…)
+      : b.year - a.year || b.updated_at.localeCompare(a.updated_at));
   }, [cards, tab, sort, year]);
   const archivedCount = (cards ?? []).filter((c) => c.status === "archived").length;
 
@@ -151,7 +150,7 @@ export default function ForecastsPage() {
           ))}
         </div>
         <select className="inp w-auto max-w-full py-1.5" value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Сортировка">
-          <option value="year">Год прогноза: сначала ближайшие</option>
+          <option value="year">По году: сначала новые</option>
           <option value="updated">По дате изменения</option>
           <option value="status">По статусу</option>
         </select>
