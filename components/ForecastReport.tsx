@@ -94,14 +94,14 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
       const n = g.rows.reduce((s, r) => s + r.contracts, 0);
       const res = resG(g.rows);
       return [g.key || "Без категории", ...(ex ? [[...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 3).join("; ")] : []), p1(g.total),
-        ...(hasRes ? [res, p1(nmcGrowth(g.total, res!)), m3(nmcGrowth(g.total, res!))] : [m3(g.total)]),
+        ...(hasRes ? [res, p1(nmcGrowth(g.total, res!)), Math.round(1_000_000 * (1 + nmcGrowth(g.total, res!) / 100))] : [m3(g.total)]),
         ...(audience === "staff" ? [n, reliability(n).text] : [])];
     });
-    const rateHead = hasRes ? ["Рост по индексам, %", "Надбавка закупщиков, %", `Рекомендуемая НМЦ ${year}, %`, "Множитель к договору"] : ["Рост, %", "Множитель"];
+    const rateHead = hasRes ? ["Рост по индексам, %", "Надбавка закупщиков, %", `Рекомендуемая НМЦ ${year}: прибавить к цене договора, %`, "НМЦ при договоре 1 млн ₽"] : ["Рост, %", "Множитель"];
     const nmcAll = hasRes ? nmcGrowth(total.total, reserve!.overall!) : null;
     const threeRows: (string | number | null)[][] = [
       [`Рост цен по индексам на ${year}, %`, p1(total.total)],
-      ...(hasRes ? [[`Надбавка закупщиков (НМЦ выше договоров; ${reserveYearsText(reserve!)}), %`, reserve!.overall!], [`Рекомендуемая НМЦ на ${year} к договорам ${baseYear}, %`, nmcAll!], ["Множитель к сумме договора", m3(nmcAll!)]] : [["Множитель к сумме договора", m3(total.total)]]),
+      ...(hasRes ? [[`Надбавка закупщиков (НМЦ выше договоров; ${reserveYearsText(reserve!)}), %`, reserve!.overall!], [`Рекомендуемая НМЦ на ${year} к договорам ${baseYear}, %`, nmcAll!], ["НМЦ при договоре 1 млн ₽", Math.round(1_000_000 * (1 + nmcAll! / 100))]] : [["Множитель к сумме договора", m3(total.total)]]),
     ];
     if (audience === "customer") {
       const headC = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Рост к ценам договоров ${baseYear}, базовый сценарий МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
@@ -110,7 +110,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
         ...threeRows,
         ...(cpi != null ? [[`Общая инфляция, прогноз ${cpiSource}, %`, p1(cpi)]] : []),
         [],
-        ["Как применить: сумма договора " + baseYear + " × множитель = рекомендуемая НМЦ на " + year + ". Проценты одинаковы для сумм с НДС и без НДС."],
+        ["Как применить: к цене договора " + baseYear + " прибавьте процент рекомендуемой НМЦ — это НМЦ для ГПЗ " + year + ". Проценты одинаковы для сумм с НДС и без НДС."],
       ], [60, 14]);
       add("НМЦ по категориям", [...headC, ["Категория", ...rateHead], ...rateRows(cats, false)], [48, 18, 20, 22, 18]);
       add("НМЦ по направлениям", [...headC, ["Направление", "Примеры закупок", ...rateHead], ...rateRows(subjects, true)], [50, 60, 18, 20, 22, 18]);
@@ -254,7 +254,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
               <ThreeNumbers growth={total.total} reserve={reserve} year={year} baseYear={baseYear} cpi={cpi} cpiSource={cpiSource} />
               <div className="rounded-lg px-4 py-3 text-xs leading-relaxed" style={{ background: RC.bg, color: RC.ink2 }}>
                 <p className="font-semibold" style={{ color: RC.ink }}>Как применить</p>
-                <p className="mt-0.5">Найдите свою категорию или направление ниже и умножьте сумму договора {baseYear} года на множитель рекомендуемой НМЦ. Например, договор на 10 млн ₽ при рекомендуемой НМЦ {fmtPct(reserve?.overall != null ? nmcGrowth(total.total, reserve.overall) : total.total)} — НМЦ на {year} год ≈ {fmtMoney(10_000_000 * (1 + (reserve?.overall != null ? nmcGrowth(total.total, reserve.overall) : total.total) / 100))}. Проценты одинаковы для сумм с НДС и без НДС. Договор на несколько лет — на каждый следующий год добавьте рост цен по прогнозу инфляции.</p>
+                <p className="mt-0.5">Возьмите цену своего договора {baseYear} года, найдите ниже свою категорию или направление и прибавьте указанный процент — это НМЦ для ГПЗ {year}. Например, договор на 1 000 000 ₽ при {fmtPct(reserve?.overall != null ? nmcGrowth(total.total, reserve.overall) : total.total)} → НМЦ ≈ {Math.round(1_000_000 * (1 + (reserve?.overall != null ? nmcGrowth(total.total, reserve.overall) : total.total) / 100)).toLocaleString("ru-RU")} ₽. Проценты одинаковы для сумм с НДС и без НДС.</p>
               </div>
               {cats.length > 0 && <Box title="Рекомендуемая НМЦ по категориям закупок"><RateTable reserve={reserve} year={year} baseYear={baseYear} cpi={cpi} groups={cats.map((c) => ({ key: c.key, label: shortCat(c.key), total: c.total, rows: c.rows }))} /></Box>}
             </Sheet>
@@ -565,7 +565,7 @@ function RateTable({ groups, year, baseYear, cpi, examples, showReliability, res
         <table className="w-full text-xs" style={NUM}>
           <thead style={{ color: RC.muted }}><tr>
             <th className={th}>{examples ? "Направление" : "Категория"}</th><th className={`${th} w-[34%]`}>Из чего складывается НМЦ {year}</th>
-            <th className={`${th} text-right`}>Умножьте договор {baseYear} на</th><th className={`${th} text-right`}>Договор 1 млн ₽ →</th>
+            <th className={`${th} text-right`}>Заложите в НМЦ {year}</th><th className={`${th} text-right`}>Пример: договор {baseYear} на 1 млн ₽</th>
           </tr></thead>
           <tbody>{items.map(({ g, res, nmc }) => {
             const ex = [...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 2);
@@ -579,15 +579,15 @@ function RateTable({ groups, year, baseYear, cpi, examples, showReliability, res
                     <div style={{ width: W(g.total), background: RC.blue }} data-tip={`рост цен по индексам ${fmtPct(g.total)}`} />
                     <div style={{ width: W(nmc - g.total), background: RC.violet }} data-tip={`надбавка ${fmtPct(res)}`} />
                   </div>
-                  <span className="mt-0.5 block text-[10.5px]" style={{ color: RC.ink2 }}>{fmtPct(g.total)} рост · {fmtPct(res)} надбавка = <b style={{ color: RC.ink }}>{fmtPct(nmc)}</b></span>
+                  <span className="mt-0.5 block text-[10.5px]" style={{ color: RC.ink2 }}>{fmtPct(g.total)} рост, затем {fmtPct(res)} надбавка к выросшей цене → <b style={{ color: RC.ink }}>{fmtPct(nmc)}</b></span>
                 </td>
-                <td className={`${td} whitespace-nowrap text-right text-base font-bold`} style={{ borderColor: RC.line, color: RC.violet }}>× {fmtMult(nmc)}</td>
-                <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line, color: RC.ink }}>{`${Math.round(1_000_000 * (1 + nmc / 100)).toLocaleString("ru-RU")} ₽`}</td>
+                <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line, color: RC.violet }}><b className="text-base">{fmtPct(nmc)}</b><span className="block text-[10.5px]" style={{ color: RC.muted }}>к цене договора {baseYear}</span></td>
+                <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line, color: RC.ink }}><span style={{ color: RC.muted }}>НМЦ</span> <b>{`${Math.round(1_000_000 * (1 + nmc / 100)).toLocaleString("ru-RU")} ₽`}</b></td>
               </tr>
             );
           })}</tbody>
           <caption className="caption-bottom pt-2 text-left text-[10.5px]" style={{ color: RC.muted }}>
-            Как пользоваться: возьмите цену договора {baseYear} года по своей закупке и умножьте на число из колонки — это НМЦ для ГПЗ {year}. Надбавка — на сколько закупщики в прошлые годы закладывали НМЦ выше итоговых договоров.
+            Как пользоваться: найдите свою категорию и прибавьте к цене прошлогоднего договора указанный процент — получится НМЦ для ГПЗ {year}. Например, договор {baseYear} года на 500 000 ₽ при +10 % → НМЦ 550 000 ₽. Процент уже включает рост цен по индексам и обычную для закупщиков надбавку.
           </caption>
         </table>
       </div>
@@ -706,7 +706,7 @@ function ThreeNumbers({ growth, reserve, year, baseYear, cpi, cpiSource }: { gro
       <div className="rounded-xl px-4 py-3 text-white" style={{ background: RC.violet }}>
         <p className="text-xs text-white/75">Рекомендуемая НМЦ на {year}</p>
         <p className="my-0.5 text-2xl font-bold sm:text-[26px]" style={NUM}>{fmtPct(n)}</p>
-        <p className="text-[11.5px] text-white/75">{r == null ? "= рост по индексам" : `сначала ${fmtPct(growth)} рост, затем ${fmtPct(r)} надбавка к выросшей цене`}: умножьте сумму договора {baseYear} на {fmtMult(n)}</p>
+        <p className="text-[11.5px] text-white/75">{r == null ? "= рост по индексам" : `сначала ${fmtPct(growth)} рост, затем ${fmtPct(r)} надбавка к выросшей цене`}. Заложите в НМЦ на {fmtPct(n).replace("+", "")} больше цены договора {baseYear}</p>
       </div>
     </div>
   );
