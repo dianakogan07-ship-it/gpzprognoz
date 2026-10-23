@@ -1,108 +1,134 @@
-import { listTable, sql } from "../db";
-import { median } from "../forecast";
+import { sql } from "../db";
+import { median, unpackPoint, type PackedPoint } from "../forecast";
 import type { StoredItem } from "./model";
 
-/**
- * Вид продукции — первые две ступени кода ОКПД2 (19.20 — нефтепродукты) и единица.
- * Цены — медианы за единицу без НДС по всем позициям вида в году.
- */
-export interface AccuracyGroup {
-  code: string; name: string; unit: string;
-  /** Позиций вида: в прошлом году (прогноз системы) и в этом (факт) */
-  nBase: number; nFact: number;
+/** Закупка года: сколько заложил закупщик (НМЦ) и за сколько заключили договор — за единицу без НДС */
+export interface AccuracyLot { subject: string; region: string | null; unit: string; lot: string | null; plan: number; fact: number; dev: number }
+/** Повторяющаяся закупка: тот же код ОКПД2 и единица в двух годах */
+export interface AccuracyRepeat {
+  subject: string; okpd2: string; region: string | null; unit: string; sameRegion: boolean;
   base: number; fact: number; manual: number | null; system: number;
-  /** Рост к прошлому году, % */
-  gFact: number; gManual: number | null; gSystem: number;
 }
 export interface AccuracyYear {
   year: number;
-  /** Прогноз системы на год (база — прошлый год): из него цены прошлого года и прогноз */
-  systemFrom: { id: number; title: string; growth: number; items: number } | null;
-  /** Прогноз с базой этого года: из него факт (договоры года) и НМЦ закупщиков */
-  factFrom: { id: number; title: string; items: number } | null;
-  /** Рост по всем сопоставленным видам, %: виды взвешены суммой цен прошлого года, как в карточке прогноза */
-  fact: number | null; system: number | null;
-  /** Ручной — по видам, где есть НМЦ; факт на том же наборе */
-  manual: number | null; factManual: number | null;
-  /** Виды: только в прошлом году, только в этом, общие */
-  kinds: { base: number; fact: number; common: number };
-  groups: AccuracyGroup[];
+  /** Прогноз с базой этого года: из него договоры года и НМЦ закупщиков */
+  factFrom: { id: number; title: string } | null;
+  /** Прогноз системы на этот год (база — прошлый год) */
+  systemFrom: { id: number; title: string; growth: number } | null;
+  /** Ручной прогноз по всем закупкам года */
+  manual: {
+    /** НМЦ из ГПЗ (план) или, если её нет в ГПЗ, из отчётности (на момент торгов) */
+    source: "gpz" | "report" | null;
+    n: number;
+    /** Насколько НМЦ отличалась от цены договора: по сумме закупок, медиана по закупкам, типичное отклонение, % */
+    bySum: number | null; median: number | null; typical: number | null;
+    /** Доля закупок, где НМЦ отличалась от договора не больше чем на 10 % */
+    within10: number | null;
+    lots: AccuracyLot[];
+  };
+  /** Повторяющиеся закупки: ручной прогноз против системы на одних и тех же позициях */
+  repeats: {
+    n: number;
+    /** Типичная ошибка (медиана |прогноз / факт − 1|), % */
+    manualError: number | null; systemError: number | null;
+    /** Рост цен к прошлому году, медиана по позициям, % */
+    fact: number | null; manualGrowth: number | null; systemGrowth: number | null;
+    /** Позиций, где система ближе к факту, чем закупщик */
+    systemCloser: number; compared: number;
+    rows: AccuracyRepeat[];
+  };
 }
 
+/** Меньше стольких повторяющихся закупок — вывод о точности системы делать рано */
+export const MIN_REPEATS = 5;
 const STATUS_RANK: Record<string, number> = { approved: 0, review: 1, draft: 2, archived: 3, rejected: 4 };
-const r1 = (x: number) => Math.round(x * 10) / 10;
-const pct = (p: number, b: number) => r1((p / b - 1) * 100);
+const r1 = (x: number | null) => (x == null ? null : Math.round(x * 10) / 10);
+const med = (xs: number[]) => (xs.length ? median(xs) : null);
 
 async function itemsOf(versionId: number): Promise<StoredItem[]> {
   const rows = await sql().query(
-    `SELECT item_key, okpd2, subject, region, unit, base_price, forecast_price, data - 'pts' AS data FROM forecast_items WHERE version_id = $1`, [versionId]);
+    `SELECT item_key, okpd2, subject, region, unit, base_price, forecast_price, data FROM forecast_items WHERE version_id = $1`, [versionId]);
   return rows.map((r) => ({ ...r, base_price: Number(r.base_price), forecast_price: Number(r.forecast_price) })) as StoredItem[];
 }
 
-type D = { rawMedian?: number; nmcMedian?: number | null; unitLabel?: string };
+type D = { rawMedian?: number; unitLabel?: string; regionName?: string; pts?: PackedPoint[] };
 const dataOf = (i: StoredItem) => i.data as StoredItem["data"] & D;
-/** Цена договоров года по позиции — медиана без пересчёта внутри года */
 const contract = (i: StoredItem) => dataOf(i).rawMedian || i.base_price;
 const unitOf = (i: StoredItem) => String(dataOf(i).unitLabel ?? i.unit).trim().toLowerCase();
-const kindOf = (okpd2: string) => okpd2.split(".").slice(0, 2).join(".");
-
-/** Сводный рост по видам: взвешиваем суммой цен прошлого года */
-function total(gs: { base: number; nBase: number; g: number }[]) {
-  const w = gs.reduce((s, x) => s + x.base * x.nBase, 0);
-  return w ? r1(gs.reduce((s, x) => s + x.base * x.nBase * x.g, 0) / w) : null;
-}
+const pointsOf = (i: StoredItem) => (dataOf(i).pts ?? []).map(unpackPoint);
 
 /**
- * По каждому году Y: на сколько выросли цены договоров Y к Y−1 (факт), сколько заложили закупщики (НМЦ в ГПЗ Y)
- * и сколько предсказала система (прогноз на Y по отчётности Y−1). Сравниваем по видам продукции, которые есть в обоих годах.
+ * Ручной прогноз — НМЦ, которую закупщик заложил по лоту, против цены договора по этому же лоту.
+ * Прогноз системы — цена договора прошлого года × индекс; проверяется на закупках, которые повторяются в двух годах.
  */
 export async function accuracyByYear(): Promise<AccuracyYear[]> {
   const fs = await sql().query(`SELECT f.id, f.title, f.year, f.base_year, f.status, f.updated_at, f.current_version_id, v.stats
     FROM forecasts f JOIN forecast_versions v ON v.id = f.current_version_id`);
-  const names = new Map((await listTable("okpd2")).map((o) => [String(o.code), String(o.name)]));
   const pick = (list: typeof fs) => list.filter((f) => f.status !== "rejected")
     .sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || +new Date(b.updated_at) - +new Date(a.updated_at))[0] ?? null;
-  const years = [...new Set(fs.flatMap((f) => [Number(f.base_year), Number(f.year)]))].sort((a, b) => b - a);
+  const years = [...new Set(fs.map((f) => Number(f.base_year)))].sort((a, b) => b - a);
   const out: AccuracyYear[] = [];
   for (const year of years) {
-    const sysF = pick(fs.filter((f) => Number(f.year) === year && Number(f.base_year) === year - 1));
     const factF = pick(fs.filter((f) => Number(f.base_year) === year));
-    if (!sysF && !factF) continue;
+    if (!factF) continue;
+    const sysF = pick(fs.filter((f) => Number(f.year) === year && Number(f.base_year) === year - 1));
+    const factItems = await itemsOf(factF.current_version_id);
+
+    // 1. Ручной прогноз по каждой закупке: НМЦ из ГПЗ, а если её там нет — из отчётности
+    const all = factItems.flatMap((i) => pointsOf(i).map((p) => ({ i, p })));
+    const source = all.some((x) => x.p.planNmc) ? "gpz" : all.some((x) => x.p.nmc) ? "report" : null;
+    const lots: AccuracyLot[] = all.flatMap(({ i, p }) => {
+      const plan = source === "gpz" ? p.planNmc : p.nmc;
+      if (!plan || !p.raw) return [];
+      const d = dataOf(i);
+      return [{ subject: p.subject ?? i.subject, region: d.regionName ?? i.region, unit: d.unitLabel ?? i.unit, lot: p.lot, plan, fact: p.raw, dev: (plan / p.raw - 1) * 100 }];
+    });
+    const sumPlan = all.reduce((s, { p }) => s + ((source === "gpz" ? p.planNmc : p.nmc) && p.raw ? (source === "gpz" ? p.planNmc! : p.nmc!) * (p.qty ?? 1) : 0), 0);
+    const sumFact = all.reduce((s, { p }) => s + ((source === "gpz" ? p.planNmc : p.nmc) && p.raw ? p.raw * (p.qty ?? 1) : 0), 0);
+
+    // 2. Повторяющиеся закупки: позиция прогноза на этот год, которую закупали и в этом году (тот же код ОКПД2 и единица)
     const sysItems = sysF ? await itemsOf(sysF.current_version_id) : [];
-    const factItems = factF ? await itemsOf(factF.current_version_id) : [];
-    const byKind = (xs: StoredItem[]) => {
-      const m = new Map<string, StoredItem[]>();
-      for (const i of xs) { const k = `${kindOf(i.okpd2)}|${unitOf(i)}`; m.set(k, [...(m.get(k) ?? []), i]); }
-      return m;
-    };
-    const B = byKind(sysItems), F = byKind(factItems);
-    const groups: AccuracyGroup[] = [];
-    for (const [k, bs] of B) {
-      const fx = F.get(k);
-      if (!fx) continue;
-      const base = median(bs.map(contract)), fact = median(fx.map(contract)), system = median(bs.map((i) => i.forecast_price));
-      // Разница больше чем в 10 раз — внутри вида закупали разное, сравнивать нельзя
-      if (!base || fact / base > 10 || fact / base < 0.1) continue;
-      const nmc = fx.map((i) => dataOf(i).nmcMedian).filter((v): v is number => !!v && v > 0);
-      const manual = nmc.length ? median(nmc) : null;
-      const [code, unit] = k.split("|");
-      groups.push({
-        code, unit: dataOf(bs[0]).unitLabel ?? unit, name: names.get(code) ?? bs[0].subject,
-        nBase: bs.length, nFact: fx.length, base, fact, manual, system,
-        gFact: pct(fact, base), gManual: manual != null ? pct(manual, base) : null, gSystem: pct(system, base),
-      });
+    const byCode = new Map<string, StoredItem[]>();
+    for (const i of factItems) { const k = `${i.okpd2}|${unitOf(i)}`; byCode.set(k, [...(byCode.get(k) ?? []), i]); }
+    const planOf = (i: StoredItem) => med(pointsOf(i).map((p) => (source === "gpz" ? p.planNmc : p.nmc)).filter((v): v is number => !!v && v > 0));
+    const rows: AccuracyRepeat[] = [];
+    for (const s of sysItems) {
+      const cands = byCode.get(`${s.okpd2}|${unitOf(s)}`);
+      if (!cands) continue;
+      // Сначала тот же регион; нет — медиана по регионам
+      const same = cands.filter((c) => (c.region ?? "") === (s.region ?? ""));
+      const use = same.length ? same : cands;
+      const base = contract(s), fact = median(use.map(contract));
+      // Цена отличается больше чем в 3 раза — под тем же кодом закупали другое, это не рост цен
+      if (!base || fact / base > 3 || fact / base < 1 / 3) continue;
+      const plans = use.map(planOf).filter((v): v is number => v != null);
+      const d = dataOf(s);
+      rows.push({ subject: s.subject, okpd2: s.okpd2, region: d.regionName ?? s.region, unit: d.unitLabel ?? s.unit, sameRegion: same.length > 0,
+        base, fact, manual: plans.length ? median(plans) : null, system: s.forecast_price });
     }
-    const wm = groups.filter((g) => g.gManual != null);
+    const cmp = rows.filter((r) => r.manual != null);
+    const err = (p: number, f: number) => Math.abs(p / f - 1) * 100;
     out.push({
       year,
-      systemFrom: sysF ? { id: sysF.id, title: sysF.title, growth: Number(sysF.stats?.growth ?? 0), items: sysItems.length } : null,
-      factFrom: factF ? { id: factF.id, title: factF.title, items: factItems.length } : null,
-      fact: total(groups.map((g) => ({ ...g, g: g.gFact }))),
-      system: total(groups.map((g) => ({ ...g, g: g.gSystem }))),
-      manual: total(wm.map((g) => ({ ...g, g: g.gManual! }))),
-      factManual: total(wm.map((g) => ({ ...g, g: g.gFact }))),
-      kinds: { base: B.size, fact: F.size, common: groups.length },
-      groups: groups.sort((a, b) => b.base * b.nBase - a.base * a.nBase),
+      factFrom: { id: factF.id, title: factF.title },
+      systemFrom: sysF ? { id: sysF.id, title: sysF.title, growth: Number(sysF.stats?.growth ?? 0) } : null,
+      manual: {
+        source, n: lots.length,
+        bySum: sumFact ? r1((sumPlan / sumFact - 1) * 100) : null,
+        median: r1(med(lots.map((l) => l.dev))), typical: r1(med(lots.map((l) => Math.abs(l.dev)))),
+        within10: lots.length ? Math.round((lots.filter((l) => Math.abs(l.dev) <= 10).length / lots.length) * 100) : null,
+        lots: lots.sort((a, b) => Math.abs(b.dev) - Math.abs(a.dev)),
+      },
+      repeats: {
+        n: rows.length,
+        manualError: r1(med(cmp.map((r) => err(r.manual!, r.fact)))),
+        systemError: r1(med((cmp.length ? cmp : rows).map((r) => err(r.system, r.fact)))),
+        fact: r1(med(rows.map((r) => (r.fact / r.base - 1) * 100))),
+        manualGrowth: r1(med(cmp.map((r) => (r.manual! / r.base - 1) * 100))),
+        systemGrowth: r1(med(rows.map((r) => (r.system / r.base - 1) * 100))),
+        systemCloser: cmp.filter((r) => err(r.system, r.fact) < err(r.manual!, r.fact)).length, compared: cmp.length,
+        rows,
+      },
     });
   }
   return out;

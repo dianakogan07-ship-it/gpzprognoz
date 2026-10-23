@@ -145,19 +145,21 @@ export interface ContractPoint {
   regionFixed?: boolean;
   /** Доля цены, относящаяся к базовому году (договор заходит на следующий год); 1 — весь договор в базовом году */
   share?: number | null;
+  /** НМЦ за единицу без НДС из ГПЗ — цена, которую закупщик заложил в план (ручной прогноз) */
+  planNmc?: number | null;
 }
 /** Договор в хранилище — массивом, чтобы строка не разрасталась: [цена, месяц, год, количество, срок, рост по ДС, действует в году прогноза, месяцев в ГПЗ, квартал, ставка НДС из файла, валюта] */
 export type PackedPoint = (number | string | null)[];
 export const packPoint = (p: Partial<ContractPoint> & { raw: number; month: number | null }): PackedPoint =>
   [p.raw, p.month, p.year ?? null, p.qty ?? null, p.months ?? null, p.ds ?? null, p.active ? 1 : 0, p.gpzMonths ?? null, p.quarter ?? null, p.vatFile ?? null, p.currency ?? null, p.nmc ?? null,
-    p.lot ?? null, p.start ?? null, p.end ?? null, p.mBase ?? null, p.mAfter ?? null, p.subject || null, p.regionFixed ? 1 : 0, p.share ?? null];
+    p.lot ?? null, p.start ?? null, p.end ?? null, p.mBase ?? null, p.mAfter ?? null, p.subject || null, p.regionFixed ? 1 : 0, p.share ?? null, p.planNmc ?? null];
 export const unpackPoint = (a: PackedPoint) => {
   const n = (i: number) => (typeof a[i] === "number" ? (a[i] as number) : null);
   return {
     raw: n(0) ?? 0, month: n(1), year: n(2), qty: n(3), months: n(4), ds: n(5),
     active: a[6] === 1, gpzMonths: n(7), quarter: n(8), vatFile: n(9), currency: typeof a[10] === "string" ? a[10] : null, nmc: n(11),
     lot: typeof a[12] === "string" ? a[12] : null, start: typeof a[13] === "string" ? a[13] : null, end: typeof a[14] === "string" ? a[14] : null,
-    mBase: n(15), mAfter: n(16), ...(typeof a[17] === "string" ? { subject: a[17] } : {}), regionFixed: a[18] === 1, share: n(19),
+    mBase: n(15), mAfter: n(16), ...(typeof a[17] === "string" ? { subject: a[17] } : {}), regionFixed: a[18] === 1, share: n(19), planNmc: n(20),
   };
 };
 export interface ExcludedRow {
@@ -325,8 +327,8 @@ export function buildForecast(gpz: GpzRow[], report: ReportRow[], ref: Reference
       gpzMonths: gpzMonths && months && Math.abs(gpzMonths - months) > 1 ? gpzMonths : null,
       quarter: g.quarter,
       currency: normCurrency(rep.currency),
-      // НМЦ — цена, которую закупщик заложил в план: из отчётности, а если там нет — из ГПЗ
-      nmc: rep.nmcNoVat && rep.nmcNoVat > 0 ? rep.nmcNoVat / qty : g.nmcNoVat && g.nmcNoVat > 0 && g.quantity ? g.nmcNoVat / g.quantity : null,
+      nmc: rep.nmcNoVat && rep.nmcNoVat > 0 ? rep.nmcNoVat / qty : null,
+      planNmc: g.nmcNoVat && g.nmcNoVat > 0 && g.quantity ? g.nmcNoVat / g.quantity : null,
       lot: g.lot ?? g.procId, start: startD ? startD.toISOString().slice(0, 10) : null, end: end ? end.toISOString().slice(0, 10) : null,
       mBase, mAfter, regionFixed: !!g.regionNote,
     });
