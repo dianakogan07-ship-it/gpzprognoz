@@ -6,6 +6,8 @@ import { COVERAGE_KEY, MONTHS, industryName } from "@/lib/indexFormat";
 import { DEFAULT_VAT, explainExample, lastDataMonth, type IndexRef } from "@/lib/logic";
 import type { ForecastRow } from "@/lib/forecast";
 import { RC } from "@/lib/report";
+import { useReserve } from "@/components/NmcSummary";
+import { reserveYearsText } from "@/lib/forecasts/reserve";
 import type { Reference } from "@/lib/types";
 
 
@@ -94,6 +96,7 @@ export default function LogicPage() {
     api(`/api/items/${rowId}`, "GET").then(setItem).catch((e) => setItemError(e instanceof Error ? e.message : String(e)));
   }, [rowId]);
 
+  const reserve = useReserve(item ? item.base_year : target - 1);
   const ex = useMemo(() => (reference ? (item ? fromItem(item, reference) : fromExample(reference, target)) : null), [reference, item, target]);
 
   function toggle(n: number) {
@@ -108,6 +111,9 @@ export default function LogicPage() {
   const s2 = ex.step2, s3 = ex.step3;
   const m0 = ex.months[0] ?? null;
   const industry = plain(s3.idx?.key ?? ex.okpd2, reference);
+  const resCat = item?.data.category && reserve?.byCat[item.data.category] != null ? item.data.category : null;
+  const res = reserve ? (resCat ? reserve.byCat[resCat] : reserve.overall) : null;
+  const sgn = (x: number) => `${x < 0 ? "−" : "+"}${Math.abs(x).toFixed(1).replace(".", ",")} %`;
 
   // Шаг 2: рост внутри года
   const step2Caption = s2.state === "off" ? "пересчёт не загружен" : s2.state === "not_needed" ? "не нужен: договор заключён в последнем месяце с данными или позже" : s2.state === "none" ? "нет данных за месяц"
@@ -124,22 +130,28 @@ export default function LogicPage() {
       warn: s3.branch !== "industry",
       info: <>{s3.level === "wage" ? "Трудоёмкая услуга (охрана, уборка, питание, обучение) — основная часть цены зарплата, поэтому взят прогноз роста зарплат МЭР." : s3.level === "fx" ? "Договор в валюте — цена в рублях следует за курсом, взят прогноз курса МЭР." : s3.level === "minstroy" ? "Строительство — индекс изменения сметной стоимости Минстроя по региону." : s3.branch === "industry" ? `Отрасль: ${industry}.` : `Индекса отрасли нет — взята общая инфляция.`} {s3.idx?.source && <SrcLink s={s3.idx.source} />} {statusText(s3.idx) && `Индекс ${statusText(s3.idx)}.`} Вкладка «{s3.level === "wage" ? `Рост зарплат ${ty}` : s3.level === "fx" ? `Курс валют ${ty}` : s3.level === "minstroy" ? "Стройка по регионам" : s3.branch === "industry" ? `Рост цен по отраслям ${ty}` : `Общая инфляция ${ty}`}».</>,
       what: `Умножаем цену на ожидаемый рост цен в отрасли позиции в ${ty} году. Отрасль определяем по коду ОКПД2 из ГПЗ.`, tab: s3.level === "wage" || s3.level === "fx" || s3.level === "minstroy" ? s3.level : s3.branch === "industry" ? "forecast" : "cpi" },
-    { n: 4, value: rub(ex.forecastPrice), sub: `${rub(ex.withVat)} с НДС ${Math.round(ex.vat * 100)} %`, caption: `без НДС, итого рост ${pct(ex.forecastPrice / ex.price)}`,
+    { n: 4, value: rub(ex.forecastPrice), sub: `${rub(ex.withVat)} с НДС ${Math.round(ex.vat * 100)} %`, caption: `прогноз цены договора без НДС, рост ${pct(ex.forecastPrice / ex.price)}`,
       info: <>{ex.vatFile != null ? `В ГПЗ указана ставка ${Math.round(ex.vatFile * 1000) / 10} % — без подтверждения применена ${Math.round(DEFAULT_VAT * 100)} %.` : ex.vatFromFile ? "Ставка НДС из строки ГПЗ." : `В файлах нет ставки НДС — взята основная ставка ${Math.round(DEFAULT_VAT * 100)} %.`}{" "}
         Итого рост = (1 + рост шага 2) × (1 + рост шага 3) − 1: второй рост начисляется на уже выросшую цену.{ex.edited ? " Цена позиции изменена вручную." : ""}</>,
       what: "Получаем прогноз сразу в двух видах: без НДС и с НДС по ставке из строки ГПЗ.", tab: null },
+    { n: 5, value: res != null ? sgn(res) : "нет данных", caption: res != null ? `надбавка закупщиков${resCat ? ` · «${resCat}»` : " · по всему ГПЗ"}` : "загрузите ГПЗ и отчётность прошлых лет",
+      info: <>{reserve ? `По годам: ${reserveYearsText(reserve)}. ` : ""}Считается в разделе «Точность»: для каждой закупки — НМЦ из ГПЗ против цены заключённого договора, медиана за год, затем среднее по годам.</>,
+      what: "Смотрим прошлые годы: на сколько процентов НМЦ в ГПЗ была выше цены, за которую в итоге заключили договор. Это запас на торги, который закупщики закладывают в план.", tab: null },
+    { n: 6, value: rub(ex.forecastPrice * (1 + (res ?? 0) / 100)), sub: `${rub(ex.forecastPrice * (1 + (res ?? 0) / 100) * (1 + ex.vat))} с НДС`, caption: `рекомендуемая НМЦ ${ty}: рост ${pct(ex.forecastPrice / ex.price)} + надбавка ${res != null ? sgn(res) : "0 %"}`,
+      info: <>Рекомендуемая НМЦ = цена договора × (1 + рост по индексам + надбавка). Проценты складываются.</>,
+      what: "Итог для ГПЗ: цена договора, выросшая по индексам, плюс обычная для закупщиков надбавка. Эту цифру закупщик ставит в план как НМЦ.", tab: null },
   ];
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold text-slate-900">Логика расчётов</h1>
-        <p className="hint mt-1">Как получается прогнозная цена на {ty} год.</p>
+        <p className="hint mt-1">Как получается прогнозная цена и рекомендуемая НМЦ на {ty} год.</p>
       </div>
 
       <div className="card space-y-5">
         {itemError && <p className="text-sm text-red-600">Не удалось открыть позицию: {itemError}. Показан общий пример.</p>}
-        <ol className="hidden md:grid md:grid-cols-4">
+        <ol className="hidden md:grid md:grid-cols-3 xl:grid-cols-6">
           {steps.map((s, i) => {
             const c = STEP_COLORS[i];
             return (
@@ -157,7 +169,7 @@ export default function LogicPage() {
             );
           })}
         </ol>
-        <div className="grid gap-5 md:-mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm md:grid-cols-4 md:gap-4">
+        <div className="grid gap-5 md:-mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 shadow-sm md:grid-cols-3 xl:grid-cols-6 md:gap-4">
           {steps.map((s, i) => {
             const c = STEP_COLORS[i];
             return (
@@ -189,8 +201,8 @@ export default function LogicPage() {
   );
 }
 
-const STEP_COLORS = [RC.navy, RC.sky, RC.blue, RC.violet];
-const STEP_TITLES = ["Цена договора", "Рост внутри года", "Рост в прогнозном году", "Прогноз"];
+const STEP_COLORS = [RC.navy, RC.sky, RC.blue, "#3B3FD8", "#5A4FE0", RC.violet];
+const STEP_TITLES = ["Цена договора", "Рост внутри года", "Рост в прогнозном году", "Прогноз цены", "Надбавка закупщиков", "Рекомендуемая НМЦ"];
 
 const MONTHS_GEN_FROM = (m: number | null) => (m ? ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1] : "начала года");
 const MONTHS_GEN_OF = (m: number) => ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября", "ноября", "декабря"][m - 1];
