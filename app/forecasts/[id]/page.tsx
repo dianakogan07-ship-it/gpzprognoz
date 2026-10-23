@@ -70,7 +70,12 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
   const { reference } = useReference();
   const filters = useForecastFilters();
   const [f, setF] = useState<Forecast | null>(null);
+  // Запас на торги по прошлым годам: насколько НМЦ в ГПЗ была выше цены договора
+  const [reserve, setReserve] = useState<{ years: number[]; overall: number | null; byCat: Record<string, { n: number; reserve: number }> } | null>(null);
   const [versionId, setVersionId] = useState<number | null>(null);
+  useEffect(() => {
+    if (f?.base_year) api(`/api/accuracy/reserve?upTo=${f.base_year}`, "GET").then(setReserve).catch(() => setReserve(null));
+  }, [f?.base_year]);
   const [data, setData] = useState<{ rows: ForecastRow[]; metas: RowMeta[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -190,8 +195,10 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         </div>
 
         {tab === "forecast" && <>
-        <div className="grid grid-cols-3 gap-2 sm:max-w-xl">
-          {([[fmtGrowth(s.growth), "средний рост цен"], [String(s.items), "позиций"], [String(s.contracts), `договоров ${f.base_year} в основе`]] as const).map(([v, l]) => (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {([[fmtGrowth(s.growth), "средний рост цен"], [String(s.items), "позиций"], [String(s.contracts), `договоров ${f.base_year} в основе`],
+            ...(reserve?.overall != null ? [[fmtGrowth(Math.round(((1 + s.growth / 100) * (1 + reserve.overall / 100) - 1) * 1000) / 10),
+              `рекомендуемая НМЦ к договорам ${f.base_year}: рост + запас на торги ${fmtGrowth(reserve.overall)} (ГПЗ ${reserve.years.join(", ")})`]] : [])] as const).map(([v, l]) => (
             <div key={l} className="rounded-lg bg-slate-50 px-3 py-2">
               <p className="text-xl font-semibold text-slate-900">{v}</p>
               <p className="text-xs text-slate-500">{l}</p>
@@ -225,7 +232,20 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")}
         onEdit={editable ? setEditing : undefined}
         onReview={editable ? setReviewed : undefined}
-        rowDetails={(v) => (v.meta ? <PositionDetails itemId={v.meta.itemId} baseYear={f.base_year} /> : null)} />}
+        rowDetails={(v) => (v.meta ? <>
+          {reserve && (() => {
+            const c = reserve.byCat[v.row.category ?? ""], r = c?.reserve ?? reserve.overall;
+            if (r == null) return null;
+            const nmc = v.row.forecastPrice * (1 + r / 100);
+            return (
+              <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
+                <p><span className="text-slate-500">Рекомендуемая НМЦ {f.year} для ГПЗ:</span> <b>{fmtRub(Math.round(nmc * 100) / 100)}</b> <span className="text-xs text-slate-500">без НДС</span></p>
+                <p className="text-xs text-slate-500">прогноз {fmtRub(v.row.forecastPrice)} + запас на торги {fmtGrowth(r)} — {c ? `категория «${v.row.category}»` : "по всем закупкам"}, по ГПЗ и отчётности {reserve.years.join(", ")}: на столько НМЦ в среднем была выше договора</p>
+              </div>
+            );
+          })()}
+          <PositionDetails itemId={v.meta.itemId} baseYear={f.base_year} />
+        </> : null)} />}
 
       {editing && (
         <EditModal v={editing} frozen={frozen} onClose={() => setEditing(null)} onSave={async (field, value, reason) => {

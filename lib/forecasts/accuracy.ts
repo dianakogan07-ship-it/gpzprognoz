@@ -3,7 +3,7 @@ import { median, unpackPoint, type PackedPoint } from "../forecast";
 import type { StoredItem } from "./model";
 
 /** Закупка года: сколько заложил закупщик (НМЦ) и за сколько заключили договор — за единицу без НДС */
-export interface AccuracyLot { subject: string; region: string | null; unit: string; lot: string | null; plan: number; fact: number; dev: number }
+export interface AccuracyLot { subject: string; region: string | null; unit: string; lot: string | null; category: string; plan: number; fact: number; dev: number; outlier: boolean; qty: number }
 /** Повторяющаяся закупка: тот же код ОКПД2 и единица в двух годах */
 export interface AccuracyRepeat {
   subject: string; okpd2: string; region: string | null; unit: string; sameRegion: boolean;
@@ -24,6 +24,10 @@ export interface AccuracyYear {
     bySum: number | null; median: number | null; typical: number | null;
     /** Доля закупок, где НМЦ отличалась от договора не больше чем на 10 % */
     within10: number | null;
+    /** Закупок, где НМЦ и договор отличаются больше чем в 3 раза — в средние не входят */
+    outliers: number;
+    /** Запас на торги по категориям: медиана «НМЦ к договору − 1» по закупкам, % */
+    byCat: { category: string; n: number; reserve: number }[];
     lots: AccuracyLot[];
   };
   /** Повторяющиеся закупки: ручной прогноз против системы на одних и тех же позициях */
@@ -47,7 +51,7 @@ const med = (xs: number[]) => (xs.length ? median(xs) : null);
 
 async function itemsOf(versionId: number): Promise<StoredItem[]> {
   const rows = await sql().query(
-    `SELECT item_key, okpd2, subject, region, unit, base_price, forecast_price, data FROM forecast_items WHERE version_id = $1`, [versionId]);
+    `SELECT item_key, okpd2, subject, category, region, unit, base_price, forecast_price, data FROM forecast_items WHERE version_id = $1`, [versionId]);
   return rows.map((r) => ({ ...r, base_price: Number(r.base_price), forecast_price: Number(r.forecast_price) })) as StoredItem[];
 }
 
@@ -81,10 +85,13 @@ export async function accuracyByYear(): Promise<AccuracyYear[]> {
       const plan = source === "gpz" ? p.planNmc : p.nmc;
       if (!plan || !p.raw) return [];
       const d = dataOf(i);
-      return [{ subject: p.subject ?? i.subject, region: d.regionName ?? i.region, unit: d.unitLabel ?? i.unit, lot: p.lot, plan, fact: p.raw, dev: (plan / p.raw - 1) * 100 }];
+      return [{ subject: p.subject ?? i.subject, region: d.regionName ?? i.region, unit: d.unitLabel ?? i.unit, lot: p.lot, category: i.category ?? "Без категории", plan, fact: p.raw, dev: (plan / p.raw - 1) * 100,
+        // НМЦ больше чем втрое выше договора (или ниже) — договор не на весь объём или ошибка в файле: в средние не берём
+        outlier: plan / p.raw > 3 || plan / p.raw < 1 / 3, qty: p.qty ?? 1 }];
     });
-    const sumPlan = all.reduce((s, { p }) => s + ((source === "gpz" ? p.planNmc : p.nmc) && p.raw ? (source === "gpz" ? p.planNmc! : p.nmc!) * (p.qty ?? 1) : 0), 0);
-    const sumFact = all.reduce((s, { p }) => s + ((source === "gpz" ? p.planNmc : p.nmc) && p.raw ? p.raw * (p.qty ?? 1) : 0), 0);
+    const ok = lots.filter((l) => !l.outlier);
+    // По сумме — без выбросов
+    const sumPlan = ok.reduce((s, l) => s + l.plan * l.qty, 0), sumFact = ok.reduce((s, l) => s + l.fact * l.qty, 0);
 
     // 2. Повторяющиеся закупки: позиция прогноза на этот год, которую закупали и в этом году (тот же код ОКПД2 и единица)
     const sysItems = sysF ? await itemsOf(sysF.current_version_id) : [];
@@ -115,8 +122,14 @@ export async function accuracyByYear(): Promise<AccuracyYear[]> {
       manual: {
         source, n: lots.length,
         bySum: sumFact ? r1((sumPlan / sumFact - 1) * 100) : null,
-        median: r1(med(lots.map((l) => l.dev))), typical: r1(med(lots.map((l) => Math.abs(l.dev)))),
-        within10: lots.length ? Math.round((lots.filter((l) => Math.abs(l.dev) <= 10).length / lots.length) * 100) : null,
+        median: r1(med(ok.map((l) => l.dev))), typical: r1(med(ok.map((l) => Math.abs(l.dev)))),
+        within10: ok.length ? Math.round((ok.filter((l) => Math.abs(l.dev) <= 10).length / ok.length) * 100) : null,
+        outliers: lots.length - ok.length,
+        byCat: [...new Set(lots.map((l) => l.category))].map((category) => {
+          const xs = ok.filter((l) => l.category === category).map((l) => l.dev);
+          if (!xs.length) return null;
+          return { category, n: xs.length, reserve: r1(median(xs))! };
+        }).filter((c): c is { category: string; n: number; reserve: number } => c != null).sort((a, b) => b.n - a.n),
         lots: lots.sort((a, b) => Math.abs(b.dev) - Math.abs(a.dev)),
       },
       repeats: {
@@ -132,4 +145,23 @@ export async function accuracyByYear(): Promise<AccuracyYear[]> {
     });
   }
   return out;
+}
+
+/**
+ * Средний запас на торги по годам до upTo включительно: насколько НМЦ в ГПЗ выше цены договора.
+ * По категориям — среднее медиан по годам; общий — медиана по всем закупкам, чтобы единичные выбросы не искажали цифру.
+ */
+export async function tenderReserve(upTo: number) {
+  const ys = (await accuracyByYear()).filter((y) => y.year <= upTo && y.manual.n > 0);
+  const cats = new Map<string, { n: number; sum: number; years: number }>();
+  for (const y of ys) for (const c of y.manual.byCat) {
+    const e = cats.get(c.category) ?? { n: 0, sum: 0, years: 0 };
+    e.n += c.n; e.sum += c.reserve; e.years++; cats.set(c.category, e);
+  }
+  const all = ys.flatMap((y) => y.manual.lots.filter((l) => !l.outlier).map((l) => l.dev));
+  return {
+    years: ys.map((y) => y.year).sort(),
+    overall: all.length ? r1(median(all)) : null,
+    byCat: Object.fromEntries([...cats].map(([k, e]) => [k, { n: e.n, reserve: r1(e.sum / e.years) }])) as Record<string, { n: number; reserve: number }>,
+  };
 }

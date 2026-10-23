@@ -54,6 +54,7 @@ function YearView({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
     y.systemFrom && !r.n && `Ни одна закупка не повторяется в ${y.year - 1} и ${y.year} годах (тот же код ОКПД2 и единица) — проверить систему не на чем.`,
     r.n > 0 && !enough && `Повторяющихся закупок только ${r.n} — мало для надёжного вывода, нужно хотя бы ${MIN_REPEATS}.`,
     !m.source && `В файлах ${y.year} года нет НМЦ — ручной прогноз проверить нельзя.`,
+    m.outliers > 0 && `${m.outliers} ${plural(m.outliers, "закупка", "закупки", "закупок")}, где НМЦ и договор отличаются больше чем в 3 раза, в средние не входят — скорее всего, договор заключён не на весь объём или ошибка в файле. Они отмечены в списке всех закупок.`,
     m.source === "report" && `НМЦ взята из отчётности (цена на момент торгов), а не из ГПЗ. Чтобы проверить план, обновите файлы прогноза «${y.factFrom!.title}»: «⋯» → «Редактировать».`,
   ].filter(Boolean) as string[];
   return (
@@ -95,6 +96,17 @@ function YearView({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
         </div>
       )}
 
+      {m.byCat.length > 0 && (
+        <div>
+          <p className="text-sm font-semibold text-slate-900">Запас на торги по категориям — на столько НМЦ в ГПЗ {y.year} была выше договора</p>
+          <p className="hint">Медиана по закупкам. Средний запас за прошлые годы добавляется к прогнозу как «рекомендуемая НМЦ» на странице прогноза.</p>
+          <table className="tbl mt-1">
+            <thead><tr><th>Категория</th><th className="text-right">Закупок</th><th className="text-right">Запас на торги</th></tr></thead>
+            <tbody>{m.byCat.map((c) => <tr key={c.category}><td>{c.category}</td><td className="text-right text-slate-600">{c.n}</td><td className="text-right font-medium">{signed(c.reserve)}</td></tr>)}</tbody>
+          </table>
+        </div>
+      )}
+
       {m.n > 0 && (
         <details className="group">
           <summary className="cursor-pointer select-none text-sm font-medium text-slate-700 hover:text-brand">Все закупки {y.year}: заложили в ГПЗ и договор ({m.n}) · по сумме заложили {signed(m.bySum)}</summary>
@@ -104,7 +116,7 @@ function YearView({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYe
               <tbody>{(allLots ? m.lots : m.lots.slice(0, 15)).map((l, i) => (
                 <tr key={i}><td>{l.subject}<span className="block text-xs text-slate-500">{[l.lot, l.region, l.unit].filter(Boolean).join(" · ")}</span></td>
                   <td className="whitespace-nowrap text-right">{rub(l.plan)}</td><td className="whitespace-nowrap text-right font-medium">{rub(l.fact)}</td>
-                  <td className={`whitespace-nowrap text-right ${Math.abs(l.dev) > 20 ? "text-amber-700" : "text-slate-600"}`}>{signed(l.dev)}</td></tr>
+                  <td className={`whitespace-nowrap text-right ${Math.abs(l.dev) > 20 ? "text-amber-700" : "text-slate-600"}`}>{signed(l.dev)}{l.outlier && <span className="block text-xs text-red-600">не в среднем — проверить</span>}</td></tr>
               ))}</tbody>
             </table>
             {m.lots.length > 15 && <button className="mt-2 text-sm text-brand hover:underline" onClick={() => setAllLots(!allLots)}>{allLots ? "Свернуть" : `Показать все (${m.lots.length})`}</button>}
