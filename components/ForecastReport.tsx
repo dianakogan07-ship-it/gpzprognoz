@@ -552,6 +552,47 @@ function RateTable({ groups, year, baseYear, cpi, examples, showReliability, res
   const X = (v: number) => ((v - min) / (max - min || 1)) * 100;
   const th = "py-1.5 pr-3 text-left text-[10.5px] font-medium uppercase tracking-wide";
   const td = "border-t py-2 pr-3 align-middle";
+  // С надбавкой — таблица для закупщика: на что умножить цену договора и из чего складывается множитель
+  if (reserve?.overall != null) {
+    const items = groups.map((g) => { const res = resOf(g.rows)!; return { g, res, nmc: nmcGrowth(g.total, res) }; });
+    const top = Math.max(...items.map((x) => x.nmc), 1);
+    return (
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px]" style={{ color: RC.ink2 }}>
+          <span className="inline-flex items-center gap-1.5"><i className="inline-block h-2.5 w-4 rounded-sm" style={{ background: RC.blue }} />рост цен по индексам</span>
+          <span className="inline-flex items-center gap-1.5"><i className="inline-block h-2.5 w-4 rounded-sm" style={{ background: RC.violet }} />надбавка закупщиков прошлых лет</span>
+        </div>
+        <table className="w-full text-xs" style={NUM}>
+          <thead style={{ color: RC.muted }}><tr>
+            <th className={th}>{examples ? "Направление" : "Категория"}</th><th className={`${th} w-[34%]`}>Из чего складывается НМЦ {year}</th>
+            <th className={`${th} text-right`}>Умножьте договор {baseYear} на</th><th className={`${th} text-right`}>Договор 1 млн ₽ →</th>
+          </tr></thead>
+          <tbody>{items.map(({ g, res, nmc }) => {
+            const ex = [...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 2);
+            const W = (v: number) => `${(Math.max(v, 0) / top) * 100}%`;
+            return (
+              <tr key={g.key}>
+                <td className={td} style={{ borderColor: RC.line }}><span className="font-medium" style={{ color: RC.ink }}>{g.label || "Без категории"}</span>
+                  {examples && ex.length > 0 && <span className="block text-[10.5px]" style={{ color: RC.muted }}>например: {ex.join("; ")}</span>}</td>
+                <td className={td} style={{ borderColor: RC.line }}>
+                  <div className="flex h-3 overflow-hidden rounded-sm" style={{ background: RC.track }}>
+                    <div style={{ width: W(g.total), background: RC.blue }} data-tip={`рост цен по индексам ${fmtPct(g.total)}`} />
+                    <div style={{ width: W(nmc - g.total), background: RC.violet }} data-tip={`надбавка ${fmtPct(res)}`} />
+                  </div>
+                  <span className="mt-0.5 block text-[10.5px]" style={{ color: RC.ink2 }}>{fmtPct(g.total)} рост · {fmtPct(res)} надбавка = <b style={{ color: RC.ink }}>{fmtPct(nmc)}</b></span>
+                </td>
+                <td className={`${td} whitespace-nowrap text-right text-base font-bold`} style={{ borderColor: RC.line, color: RC.violet }}>× {fmtMult(nmc)}</td>
+                <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line, color: RC.ink }}>{`${Math.round(1_000_000 * (1 + nmc / 100)).toLocaleString("ru-RU")} ₽`}</td>
+              </tr>
+            );
+          })}</tbody>
+          <caption className="caption-bottom pt-2 text-left text-[10.5px]" style={{ color: RC.muted }}>
+            Как пользоваться: возьмите цену договора {baseYear} года по своей закупке и умножьте на число из колонки — это НМЦ для ГПЗ {year}. Надбавка — на сколько закупщики в прошлые годы закладывали НМЦ выше итоговых договоров.
+          </caption>
+        </table>
+      </div>
+    );
+  }
   return (
     <table className="w-full text-xs" style={NUM}>
       <thead style={{ color: RC.muted }}><tr>
