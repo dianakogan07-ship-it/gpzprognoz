@@ -14,7 +14,7 @@ export interface Stale {
 
 export const FRESH_RULE: Record<FreshId, string> = {
   mer: "Минэкономразвития публикует прогноз раз в год, в сентябре",
-  cbr: "Банк России обновляет прогноз инфляции ежемесячно",
+  cbr: "Обновляйте раз в год, в октябре: файл «Агрегированные результаты опроса» Банка России",
   rosstat: "Росстат публикует цены производителей ежемесячно, примерно через 3–4 недели после конца месяца",
   minstroy: "Минстрой публикует индексы раз в квартал",
 };
@@ -44,8 +44,12 @@ export function staleness(indices: PriceIndex[], year: number, baseYear: number,
   const cpi = act.filter((i) => i.kind === "cpi" && i.year === year);
   const cpiLast = lastOf(cpi);
   if (!cpi.length) out.push({ id: "cbr", title: "Прогноз инфляции", reason: `нет прогноза инфляции на ${year} год`, last: null });
-  else if (!cpiLast || now.getTime() - Date.parse(cpiLast) > 35 * DAY)
-    out.push({ id: "cbr", title: "Прогноз инфляции", reason: `не сверяли с Банком России больше месяца${cpiLast ? ` — с ${fmt(cpiLast)}` : ""}`, last: cpiLast });
+  else {
+    // Раз в год: после октябрьского опроса года перед прогнозным данные должны быть загружены позже 1 октября
+    const oct = Date.UTC(year - 1, 9, 1), nov = Date.UTC(year - 1, 10, 1);
+    if (now.getTime() >= nov && (!cpiLast || Date.parse(cpiLast) < oct))
+      out.push({ id: "cbr", title: "Прогноз инфляции", reason: `вышел октябрьский опрос Банка России ${year - 1} года${cpiLast ? `, а загружено ${fmt(cpiLast)}` : ""}`, last: cpiLast });
+  }
   // Росстат: данные за базовый год — до позапрошлого месяца (или весь год, если он закончился)
   if (baseYear <= now.getUTCFullYear()) {
     const ros = act.filter((i) => i.kind === "to_december" && i.year === baseYear);

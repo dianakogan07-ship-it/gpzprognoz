@@ -39,7 +39,7 @@ const tabsFor = (target: number): Tab[] => [
 const SOURCES: { id: FreshId; title: string; what: string; tab: IndexKind; match: (i: PriceIndex) => boolean }[] = [
   { id: "mer", title: "Минэкономразвития", what: "Рост цен по отраслям, зарплаты и курс доллара. Раз в год, в сентябре.", tab: "forecast",
     match: (i) => /^(forecast|wage|fx)/.test(i.kind) || (/^cpi/.test(i.kind) && i.source_code !== "CBR") },
-  { id: "cbr", title: "Банк России", what: "Прогноз инфляции — для позиций без отраслевого индекса. Сверять раз в месяц.", tab: "cpi",
+  { id: "cbr", title: "Банк России", what: "Прогноз инфляции — для позиций без отраслевого индекса. Раз в год, в октябре.", tab: "cpi",
     match: (i) => i.kind === "cpi" && i.source_code === "CBR" },
   { id: "rosstat", title: "Росстат", what: "Рост цен внутри года: доводит цену договора до последнего месяца. Ежемесячно.", tab: "to_december",
     match: (i) => i.kind === "to_december" },
