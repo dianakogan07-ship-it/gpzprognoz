@@ -1,6 +1,7 @@
 import { sql } from "../db";
 import { median, unpackPoint, type PackedPoint } from "../forecast";
 import type { StoredItem } from "./model";
+import type { ReserveYear } from "./reserve";
 
 /** Закупка года: сколько заложил закупщик (НМЦ) и за сколько заключили договор — за единицу без НДС */
 export interface AccuracyLot { subject: string; region: string | null; unit: string; lot: string | null; category: string; plan: number; fact: number; dev: number; outlier: boolean; qty: number }
@@ -147,21 +148,10 @@ export async function accuracyByYear(): Promise<AccuracyYear[]> {
   return out;
 }
 
-/**
- * Средний запас на торги по годам до upTo включительно: насколько НМЦ в ГПЗ выше цены договора.
- * По категориям — среднее медиан по годам; общий — медиана по всем закупкам, чтобы единичные выбросы не искажали цифру.
- */
-export async function tenderReserve(upTo: number) {
-  const ys = (await accuracyByYear()).filter((y) => y.year <= upTo && y.manual.n > 0);
-  const cats = new Map<string, { n: number; sum: number; years: number }>();
-  for (const y of ys) for (const c of y.manual.byCat) {
-    const e = cats.get(c.category) ?? { n: 0, sum: 0, years: 0 };
-    e.n += c.n; e.sum += c.reserve; e.years++; cats.set(c.category, e);
-  }
-  const all = ys.flatMap((y) => y.manual.lots.filter((l) => !l.outlier).map((l) => l.dev));
-  return {
-    years: ys.map((y) => y.year).sort(),
-    overall: all.length ? r1(median(all)) : null,
-    byCat: Object.fromEntries([...cats].map(([k, e]) => [k, { n: e.n, reserve: r1(e.sum / e.years) }])) as Record<string, { n: number; reserve: number }>,
-  };
+/** Надбавка закупщиков по каждому году: медиана «НМЦ к договору − 1» по закупкам, общая и по категориям */
+export async function tenderReserve(): Promise<ReserveYear[]> {
+  return (await accuracyByYear()).filter((y) => y.manual.n > 0).map((y) => ({
+    year: y.year, overall: y.manual.median,
+    byCat: Object.fromEntries(y.manual.byCat.map((c) => [c.category, { n: c.n, reserve: c.reserve }])),
+  }));
 }

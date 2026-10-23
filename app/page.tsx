@@ -10,6 +10,7 @@ import { exportVersion } from "@/lib/forecasts/client";
 import { STATUS_TITLE, type CardColor, type ForecastStatus } from "@/lib/forecasts/model";
 import { COLOR_CLASS, EditCard, HEAD, UpdateFiles } from "@/components/EditCard";
 import { DataRefresh } from "@/components/DataRefresh";
+import { NmcSummary, useReserve } from "@/components/NmcSummary";
 import { staleness } from "@/lib/freshness";
 import type { ForecastCard } from "@/lib/forecasts/store";
 import { plural } from "@/lib/forecastView";
@@ -24,6 +25,7 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
   const router = useRouter();
   const s = { ...c.stats, subjects: c.subjects, categories: c.categories };
   const archived = c.status === "archived";
+  const reserve = useReserve(c.base_year);
   const items: MenuItem[] = [
     ...(archived ? [] : [{ label: "Обновить данные", onClick: () => onAction(c, "update") }, { label: "Редактировать", onClick: () => onAction(c, "edit") }]),
     { label: "Сравнить", onClick: () => onAction(c, "compare") },
@@ -46,11 +48,11 @@ function Card({ c, onAction }: { c: ForecastCard; onAction: (c: ForecastCard, a:
         </div>
       </div>
       <div className="flex flex-1 flex-col gap-4 px-5 py-4">
-        <div className="grid grid-cols-2 gap-2">
-          <Tile value={pctSigned(s.growth)} label="рост цен" tone={s.growth < 0 ? "text-red-700" : undefined} />
-          <Tile value={numRu(s.subjects || s.items)} label={plural(s.subjects || s.items, "предмет закупки", "предмета закупки", "предметов закупки")}
-            note={s.needsReview - s.reviewed > 0 ? `проверить: ${s.needsReview - s.reviewed}` : undefined} href={`/forecasts/${c.id}?group=subject`} />
-        </div>
+        <NmcSummary compact growth={s.growth} reserve={reserve} year={c.year} baseYear={c.base_year} />
+        <Link href={`/forecasts/${c.id}?group=subject`} onClick={(e) => e.stopPropagation()} className="text-xs text-slate-500 hover:text-brand">
+          {numRu(s.subjects || s.items)} {plural(s.subjects || s.items, "предмет закупки", "предмета закупки", "предметов закупки")}
+          {s.needsReview - s.reviewed > 0 ? ` · проверить: ${s.needsReview - s.reviewed}` : ""}
+        </Link>
       </div>
     </div>
   );

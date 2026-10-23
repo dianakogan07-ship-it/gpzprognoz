@@ -9,6 +9,7 @@ import { ForecastTable, useForecastFilters } from "@/components/ForecastTable";
 import { ForecastReport } from "@/components/ForecastReport";
 import { PositionDetails } from "@/components/PositionDetails";
 import { UpdateFiles } from "@/components/EditCard";
+import { NmcSummary, useReserve } from "@/components/NmcSummary";
 import { Modal } from "@/components/Modal";
 import { PromptModal } from "@/components/PromptModal";
 import { exportRows, fmtDate, fmtDateTime, loadVersionRows } from "@/lib/forecasts/client";
@@ -72,12 +73,9 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
   const filters = useForecastFilters();
   const [f, setF] = useState<Forecast | null>(null);
   const [updating, setUpdating] = useState(false);
-  // Запас на торги по прошлым годам: насколько НМЦ в ГПЗ была выше цены договора
-  const [reserve, setReserve] = useState<{ years: number[]; overall: number | null; byCat: Record<string, { n: number; reserve: number }> } | null>(null);
+
   const [versionId, setVersionId] = useState<number | null>(null);
-  useEffect(() => {
-    if (f?.base_year) api(`/api/accuracy/reserve?upTo=${f.base_year}`, "GET").then(setReserve).catch(() => setReserve(null));
-  }, [f?.base_year]);
+  const reserve = useReserve(f?.base_year);
   const [data, setData] = useState<{ rows: ForecastRow[]; metas: RowMeta[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -198,16 +196,8 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         </div>
 
         {tab === "forecast" && <>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {([[fmtGrowth(s.growth), "средний рост цен"], [String(s.items), "позиций"], [String(s.contracts), `договоров ${f.base_year} в основе`],
-            ...(reserve?.overall != null ? [[fmtGrowth(Math.round(((1 + s.growth / 100) * (1 + reserve.overall / 100) - 1) * 1000) / 10),
-              `рекомендуемая НМЦ к договорам ${f.base_year}: рост + запас на торги ${fmtGrowth(reserve.overall)} (ГПЗ ${reserve.years.join(", ")})`]] : [])] as const).map(([v, l]) => (
-            <div key={l} className="rounded-lg bg-slate-50 px-3 py-2">
-              <p className="text-xl font-semibold text-slate-900">{v}</p>
-              <p className="text-xs text-slate-500">{l}</p>
-            </div>
-          ))}
-        </div>
+        <NmcSummary growth={s.growth} reserve={reserve} year={f.year} baseYear={f.base_year} />
+        <p className="text-sm text-slate-500">{s.items} {plural(s.items, "позиция", "позиции", "позиций")} · {s.contracts} {plural(s.contracts, "договор", "договора", "договоров")} {f.base_year} года в основе расчёта. Рекомендуемая НМЦ по каждой позиции — в её карточке.</p>
         {s.excluded > 0 && (
           <p className="text-sm text-slate-500">
             {s.excluded} {plural(s.excluded, "строка", "строки", "строк")} из файлов не {plural(s.excluded, "попала", "попали", "попали")} в расчёт: по ним нет заключённого договора, цены или количества.{" "}
@@ -229,21 +219,22 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
         <ForecastReport key={tab} audience={tab === "staff" ? "staff" : "customer"} view={view}
           forecastId={id} versionId={ver.id} excluded={f.excluded}
           prevVersion={((p) => (p ? { id: p.id, number: p.number } : null))(f.versions.find((x) => x.number === ver.number - 1))} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
-          approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null} />
+          approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null} reserve={reserve} />
       )}
       {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
         onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")}
         onEdit={editable ? setEditing : undefined}
         onReview={editable ? setReviewed : undefined}
         rowDetails={(v) => (v.meta ? <>
-          {reserve && (() => {
-            const c = reserve.byCat[v.row.category ?? ""], r = c?.reserve ?? reserve.overall;
-            if (r == null) return null;
-            const nmc = v.row.forecastPrice * (1 + r / 100);
+          {(() => {
+            const g = Math.round((v.row.forecastPrice / contractPrice(v.row) - 1) * 1000) / 10;
+            const rc = reserve ? (reserve.byCat[v.row.category ?? ""] ?? reserve.overall) : null;
+            const nmc = v.row.forecastPrice * (1 + (rc ?? 0) / 100);
             return (
-              <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm">
-                <p><span className="text-slate-500">Рекомендуемая НМЦ {f.year} для ГПЗ:</span> <b>{fmtRub(Math.round(nmc * 100) / 100)}</b> <span className="text-xs text-slate-500">без НДС</span></p>
-                <p className="text-xs text-slate-500">прогноз {fmtRub(v.row.forecastPrice)} + запас на торги {fmtGrowth(r)} — {c ? `категория «${v.row.category}»` : "по всем закупкам"}, по ГПЗ и отчётности {reserve.years.join(", ")}: на столько НМЦ в среднем была выше договора</p>
+              <div className="grid gap-2 text-sm sm:grid-cols-3">
+                <div className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">Рост цен по индексам</p><p className="font-semibold">{fmtGrowth(g)}</p></div>
+                <div className="rounded-lg bg-slate-50 px-3 py-2"><p className="text-xs text-slate-500">Надбавка закупщиков{reserve?.byCat[v.row.category ?? ""] != null ? ` · «${v.row.category}»` : " · по всему ГПЗ"}</p><p className="font-semibold">{rc != null ? fmtGrowth(rc) : "нет данных"}</p></div>
+                <div className="rounded-lg bg-brand-light px-3 py-2 ring-1 ring-brand/20"><p className="text-xs text-slate-500">Рекомендуемая НМЦ {f.year} без НДС</p><p className="font-semibold">{fmtRub(Math.round(nmc * 100) / 100)}</p></div>
               </div>
             );
           })()}
