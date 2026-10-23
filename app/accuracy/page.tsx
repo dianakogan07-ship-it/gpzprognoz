@@ -2,14 +2,14 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api } from "@/components/useReference";
-import type { AccuracyRow, AccuracyStat, AccuracyYear } from "@/lib/forecasts/accuracy";
+import type { AccuracyRow, AccuracyYear } from "@/lib/forecasts/accuracy";
 
 const NBSP = " ";
-const pct = (x: number | null) => (x == null ? "—" : `${x.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}${NBSP}%`);
-const signed = (x: number | null) => (x == null ? "—" : `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}${NBSP}%`);
+const num = (x: number) => Math.abs(x).toLocaleString("ru-RU", { maximumFractionDigits: 1 });
+const signed = (x: number | null) => (x == null ? "—" : `${x > 0 ? "+" : x < 0 ? "−" : ""}${num(x)}${NBSP}%`);
+const pp = (x: number) => `${num(x)}${NBSP}п.${NBSP}п.`;
 const rub = (x: number) => `${x.toLocaleString("ru-RU", { maximumFractionDigits: x < 100 ? 2 : 0 })}${NBSP}₽`;
-const err = (p: number | null, f: number) => (p == null || !f ? null : (p / f - 1) * 100);
-const biasText = (s: AccuracyStat) => (s.bias == null ? "" : Math.abs(s.bias) < 1 ? "в среднем почти совпадает с фактом" : s.bias > 0 ? `обычно выше факта на ${pct(s.bias)}` : `обычно ниже факта на ${pct(-s.bias)}`);
+const g = (p: number | null, b: number) => (p == null || !b ? null : (p / b - 1) * 100);
 
 export default function AccuracyPage() {
   const [data, setData] = useState<AccuracyYear[] | null>(null);
@@ -20,20 +20,18 @@ export default function AccuracyPage() {
   return (
     <div className="space-y-5">
       <div>
-        <div className="text-sm"><Link href="/" className="text-brand hover:underline">Прогнозы</Link> <span className="text-slate-400">›</span> Точность</div>
-        <h1 className="mt-1 text-2xl font-semibold text-slate-900">Точность прогнозов по годам</h1>
+        <h1 className="text-2xl font-semibold text-slate-900">Точность прогнозов</h1>
         <p className="hint mt-1 max-w-3xl">
-          Сравниваем две оценки цены с тем, что получилось в договорах года. <b>Ручной прогноз</b> — цена, которую закупщики заложили в план (НМЦ из ГПЗ или отчётности).
-          <b> Прогноз системы</b> — цена, которую посчитал сервис на этот год по договорам прошлого года и индексам. Чем меньше ошибка, тем точнее.
+          На сколько выросли цены договоров за год — и кто это точнее предсказал. <b>Ручной прогноз</b> — сколько заложили закупщики в ГПЗ (НМЦ) к ценам договоров прошлого года.
+          <b> Прогноз системы</b> — рост, который сервис посчитал по отчётности прошлого года и данным ЦБ, МЭР и Росстата.
         </p>
       </div>
       {error && <p className="text-sm text-red-600">{error}</p>}
       {!data && !error && <p className="hint">Загрузка…</p>}
-      {data && data.length === 0 && <div className="card text-sm text-slate-600">Пока нет прогнозов. Загрузите ГПЗ и отчётность за год — и здесь появится сравнение.</div>}
-
+      {data && data.length === 0 && <div className="card text-sm text-slate-600">Пока нет прогнозов. Загрузите ГПЗ и отчётность — и здесь появится сравнение.</div>}
       {data && data.length > 0 && (() => {
-        // По умолчанию — последний год, где есть обе цифры
-        const year = sel ?? (data.find((y) => y.both) ?? data[0]).year;
+        // По умолчанию — последний год, где есть и факт, и прогноз системы
+        const year = sel ?? (data.find((y) => y.rows.length) ?? data[0]).year;
         const y = data.find((x) => x.year === year)!;
         return <YearCard key={y.year} y={y} years={data.map((x) => x.year)} onYear={setSel} />;
       })()}
@@ -41,87 +39,87 @@ export default function AccuracyPage() {
   );
 }
 
-function Verdict({ y }: { y: AccuracyYear }) {
-  const m = y.both?.manual.error, s = y.both?.system.error;
-  if (m == null || s == null) return <span className="text-slate-400">—</span>;
-  const d = Math.round((m - s) * 10) / 10;
-  if (Math.abs(d) < 1) return <span className="text-slate-600">одинаково</span>;
-  return d > 0 ? <span className="font-medium text-emerald-700">система точнее на {pct(d).replace("%", "п. п.")}</span>
-    : <span className="font-medium text-amber-700">ручной точнее на {pct(-d).replace("%", "п. п.")}</span>;
-}
-
 function YearCard({ y, years, onYear }: { y: AccuracyYear; years: number[]; onYear: (y: number) => void }) {
   const [all, setAll] = useState(false);
-  const man = y.both?.manual ?? y.manual, sys = y.both?.system ?? (y.system.n ? y.system : null);
-  const rows = [...y.rows].sort((a, b) => Math.abs(err(b.system ?? b.manual, b.fact) ?? 0) - Math.abs(err(a.system ?? a.manual, a.fact) ?? 0));
+  const errM = y.manual != null && y.factManual != null ? Math.abs(y.manual - y.factManual) : null;
+  const errS = y.system != null && y.fact != null ? Math.abs(y.system - y.fact) : null;
+  const rows = [...y.rows].sort((a, b) => b.base - a.base);
   const shown = all ? rows : rows.slice(0, 10);
   return (
     <div className="card space-y-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-xl font-semibold text-slate-900">
           <select aria-label="Год" className="inp w-auto py-1 text-xl font-semibold" value={y.year} onChange={(e) => onYear(Number(e.target.value))}>
             {years.map((x) => <option key={x} value={x}>{x}</option>)}
           </select>
           год
         </label>
-        <p className="hint">Факт — договоры {y.year} из «<Link className="text-brand hover:underline" href={`/forecasts/${y.factFrom!.id}`}>{y.factFrom!.title}</Link>»
-          {y.systemFrom && <>; прогноз системы — «<Link className="text-brand hover:underline" href={`/forecasts/${y.systemFrom.id}`}>{y.systemFrom.title}</Link>»</>}</p>
+        <p className="hint">
+          {y.systemFrom ? <>Прогноз системы — «<Link className="text-brand hover:underline" href={`/forecasts/${y.systemFrom.id}`}>{y.systemFrom.title}</Link>»</> : `Нет прогноза на ${y.year} год`}
+          {y.factFrom ? <>; факт — отчётность {y.year} из «<Link className="text-brand hover:underline" href={`/forecasts/${y.factFrom.id}`}>{y.factFrom.title}</Link>»</> : `; нет отчётности ${y.year} года`}
+        </p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {man.n ? <Tile n={1} title="Ручной прогноз (ГПЗ)" s={man} />
-          : <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
-              <p className="font-medium text-slate-900">1 · Ручной прогноз (ГПЗ)</p>
-              <p className="mt-1">В файлах {y.year} года нет начальной (максимальной) цены без НДС — ни в ГПЗ, ни в отчётности. Без неё не с чем сравнить.</p>
-            </div>}
-        {sys ? <Tile n={2} title="Прогноз системы" s={sys} />
-          : <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
-              <p className="font-medium text-slate-900">2 · Прогноз системы</p>
-              {y.systemFrom
-                ? <p className="mt-1">В прогнозе «{y.systemFrom.title}» нет позиций с теми же кодами ОКПД2 и единицами измерения, что в договорах {y.year} года, — сравнивать не с чем. Проверьте, что в нём год прогноза {y.year}, а базовый — {y.year - 1}.</p>
-                : <>
-                  <p className="mt-1">Нет прогноза на {y.year} год. Создайте его из ГПЗ и отчётности {y.year - 1} года (год прогноза {y.year}) — и здесь появится вторая цифра.</p>
-                  <Link href="/forecasts/new" className="btn-sec mt-3 inline-flex">Новый прогноз</Link>
-                </>}
-            </div>}
-      </div>
-      {y.both && <p className="text-sm"><Verdict y={y} /> <span className="text-slate-500">— сравнение на {y.both.n} одинаковых позициях, где есть все три цены.</span></p>}
-      {!y.both && sys && y.manual.n > 0 && <p className="hint">Нет позиций, где есть и ручная цена, и прогноз системы — сравнить на одних и тех же позициях нельзя.</p>}
-      {sys && (y.matched.region > 0 || y.matched.code > 0) && <p className="hint">Сопоставлено с прогнозом системы: {y.matched.exact} — та же позиция{y.matched.region ? `, ${y.matched.region} — тот же код ОКПД2, единица и регион (другой код вида закупки)` : ""}{y.matched.code ? `, ${y.matched.code} — тот же код ОКПД2 и единица, но другой регион (взята медиана)` : ""}.</p>}
-      <p className="hint">Ручная цена — это НМЦ: в неё обычно заложен запас на торги, поэтому она чаще выше факта.</p>
 
-      {rows.length > 0 && (
+      {!y.systemFrom || !y.factFrom ? (
+        <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
+          Для сравнения за {y.year} год нужны два прогноза: {!y.systemFrom && <b>прогноз на {y.year} год (базовый год {y.year - 1}, ГПЗ и отчётность {y.year - 1})</b>}
+          {!y.systemFrom && !y.factFrom && " и "}{!y.factFrom && <b>прогноз с базовым годом {y.year} (ГПЗ и отчётность {y.year})</b>} — из него берутся факт и НМЦ.
+          <Link href="/forecasts/new" className="btn-sec ml-2 inline-flex">Новый прогноз</Link>
+        </div>
+      ) : !rows.length ? (
+        <div className="rounded-xl border border-dashed border-slate-300 p-4 text-sm text-slate-600">
+          В отчётности {y.year} года нет позиций с теми же кодами ОКПД2 и единицами, что в прогнозе «{y.systemFrom.title}», — сравнивать не с чем.
+        </div>
+      ) : <>
+        <div className="grid gap-3 md:grid-cols-3">
+          <div className="rounded-xl bg-slate-100 p-4">
+            <p className="text-sm font-medium text-slate-700">Факт: рост цен {y.year} к {y.year - 1}</p>
+            <p className="mt-1 text-3xl font-semibold text-slate-900">{signed(y.fact)}</p>
+            <p className="text-xs text-slate-500">по договорам · {rows.length} позиций</p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <p className="text-sm font-medium text-slate-700">1 · Ручной прогноз (ГПЗ)</p>
+            <p className="mt-1 text-3xl font-semibold text-slate-900">{signed(y.manual)}</p>
+            <p className="text-xs text-slate-500">{y.nManual ? <>заложили закупщики · ошибка <b>{pp(errM!)}</b>{y.nManual < rows.length ? ` · ${y.nManual} позиций с НМЦ (факт на них ${signed(y.factManual)})` : ""}</> : "в файлах нет НМЦ"}</p>
+          </div>
+          <div className="rounded-xl bg-slate-50 p-4 ring-1 ring-slate-200">
+            <p className="text-sm font-medium text-slate-700">2 · Прогноз системы</p>
+            <p className="mt-1 text-3xl font-semibold text-slate-900">{signed(y.system)}</p>
+            <p className="text-xs text-slate-500">ошибка <b>{errS != null ? pp(errS) : "—"}</b> · в карточке прогноза {signed(y.systemFrom.growth)} — по всем {y.systemFrom.items} позициям</p>
+          </div>
+        </div>
+        {errM != null && errS != null && (
+          <p className="text-sm">{Math.abs(errM - errS) < 0.5 ? <span className="text-slate-600">Одинаково точно</span>
+            : errS < errM ? <span className="font-medium text-emerald-700">Система точнее на {pp(errM - errS)}</span>
+            : <span className="font-medium text-amber-700">Ручной прогноз точнее на {pp(errS - errM)}</span>}
+            <span className="text-slate-500"> — чем ближе прогноз к факту, тем точнее.</span></p>
+        )}
+        <p className="hint">
+          Сравниваем на {rows.length} из {y.systemFrom.items} позиций прогноза, которые нашлись в отчётности {y.year}
+          {y.matched.region || y.matched.code ? ` (${[y.matched.exact && `${y.matched.exact} — та же позиция`, y.matched.region && `${y.matched.region} — тот же код ОКПД2, единица и регион`, y.matched.code && `${y.matched.code} — тот же код и единица в другом регионе`].filter(Boolean).join(", ")})` : ""}.
+          Рост считается так же, как в карточке прогноза. НМЦ обычно выше цены договора — в ней заложен запас на торги.
+        </p>
         <div className="overflow-x-auto">
           <table className="tbl">
-            <thead><tr><th>Позиция</th><th className="text-right">Факт {y.year}</th><th className="text-right">1 · Ручной</th><th className="text-right">2 · Система</th></tr></thead>
+            <thead><tr><th>Позиция</th><th className="text-right">Цена {y.year - 1}</th><th className="text-right">Факт {y.year}</th><th className="text-right">1 · Ручной</th><th className="text-right">2 · Система</th></tr></thead>
             <tbody>{shown.map((r, i) => <Row key={i} r={r} />)}</tbody>
           </table>
           {rows.length > 10 && <button className="mt-2 text-sm text-brand hover:underline" onClick={() => setAll(!all)}>{all ? "Свернуть" : `Показать все позиции (${rows.length})`}</button>}
         </div>
-      )}
-    </div>
-  );
-}
-
-function Tile({ n, title, s }: { n: number; title: string; s: AccuracyStat }) {
-  return (
-    <div className="rounded-xl bg-slate-50 p-4">
-      <p className="text-sm font-medium text-slate-700">{n} · {title}</p>
-      <p className="mt-1 text-3xl font-semibold text-slate-900">{pct(s.error)}</p>
-      <p className="text-xs text-slate-500">типичная ошибка{s.n ? ` · ${s.n} позиций` : ""}{s.bias != null ? ` · ${biasText(s)}` : ""}</p>
+      </>}
     </div>
   );
 }
 
 function Row({ r }: { r: AccuracyRow }) {
-  const cell = (p: number | null) => {
-    const e = err(p, r.fact);
-    return <td className="whitespace-nowrap text-right">{p == null ? <span className="text-slate-400">—</span> : <>{rub(p)}<span className={`block text-xs ${e != null && Math.abs(e) > 20 ? "text-amber-700" : "text-slate-500"}`}>{signed(e)}</span></>}</td>;
-  };
+  const cell = (p: number | null, bold = false) => (
+    <td className={`whitespace-nowrap text-right ${bold ? "font-medium" : ""}`}>{p == null ? <span className="text-slate-400">—</span> : <>{rub(p)}<span className="block text-xs text-slate-500">{signed(g(p, r.base))}</span></>}</td>
+  );
   return (
     <tr>
       <td>{r.subject}<span className="block text-xs text-slate-500">{[r.region, r.unit, r.okpd2].filter(Boolean).join(" · ")}</span></td>
-      <td className="whitespace-nowrap text-right font-medium">{rub(r.fact)}</td>
-      {cell(r.manual)}{cell(r.system)}
+      <td className="whitespace-nowrap text-right text-slate-600">{rub(r.base)}</td>
+      {cell(r.fact, true)}{cell(r.manual)}{cell(r.system)}
     </tr>
   );
 }
