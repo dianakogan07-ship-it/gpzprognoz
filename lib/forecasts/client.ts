@@ -1,4 +1,5 @@
 "use client";
+import type { Reserve } from "./reserve";
 import { api } from "@/components/useReference";
 import { downloadWorkbook, forecastWorkbook } from "../excel";
 import { buildForecast, type ForecastRow } from "../forecast";
@@ -16,10 +17,10 @@ export async function loadVersionRows(forecastId: number, versionId: number) {
   return { items, rows, metas };
 }
 
-export function exportRows(title: string, year: number, version: number, rows: ForecastRow[], sources: Source[], suffix = "") {
+export function exportRows(title: string, year: number, version: number, rows: ForecastRow[], sources: Source[], suffix = "", reserve: Reserve | null = null) {
   const res = { rows, excluded: [], newWsCodes: [], stats: { gpz: 0, matched: 0, used: rows.reduce((s, r) => s + r.contracts, 0) } };
   const name = `${title} v${version}${suffix}`.replace(/[\\/:*?"<>|]+/g, " ").trim();
-  downloadWorkbook(forecastWorkbook(res, sources, year, rows), `${name}.xlsx`);
+  downloadWorkbook(forecastWorkbook(res, sources, year, rows, reserve), `${name}.xlsx`);
 }
 
 export async function exportVersion(f: { id: number; title: string; year: number }, versionId: number, version: number, sources: Source[]) {

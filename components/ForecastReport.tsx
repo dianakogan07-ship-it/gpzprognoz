@@ -87,23 +87,33 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
     };
     const p1 = (v: number) => Math.round(v * 10) / 10;
     const m3 = (pct: number) => Math.round((1 + pct / 100) * 1000) / 1000;
+    // Надбавка группы — средняя по категориям её позиций
+    const resG = (rs: ForecastRow[]) => (reserve?.overall == null ? null : p1(rs.reduce((s, r) => s + (reserve.byCat[r.category ?? ""] ?? reserve.overall!), 0) / (rs.length || 1)));
+    const hasRes = reserve?.overall != null;
     const rateRows = (gs: { key: string; total: number; rows: ForecastRow[] }[], ex: boolean) => gs.map((g) => {
       const n = g.rows.reduce((s, r) => s + r.contracts, 0);
-      return [g.key || "Без категории", ...(ex ? [[...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 3).join("; ")] : []), p1(g.total), m3(g.total),
+      const res = resG(g.rows);
+      return [g.key || "Без категории", ...(ex ? [[...new Set(g.rows.flatMap((r) => r.gpzNames ?? []))].slice(0, 3).join("; ")] : []), p1(g.total),
+        ...(hasRes ? [res, p1(nmcGrowth(g.total, res!)), m3(nmcGrowth(g.total, res!))] : [m3(g.total)]),
         ...(audience === "staff" ? [n, reliability(n).text] : [])];
     });
+    const rateHead = hasRes ? ["Рост по индексам, %", "Надбавка закупщиков, %", `Рекомендуемая НМЦ ${year}, %`, "Множитель к договору"] : ["Рост, %", "Множитель"];
+    const nmcAll = hasRes ? nmcGrowth(total.total, reserve!.overall!) : null;
+    const threeRows: (string | number | null)[][] = [
+      [`Рост цен по индексам на ${year}, %`, p1(total.total)],
+      ...(hasRes ? [[`Надбавка закупщиков (НМЦ выше договоров; ${reserveYearsText(reserve!)}), %`, reserve!.overall!], [`Рекомендуемая НМЦ на ${year} к договорам ${baseYear}, %`, nmcAll!], ["Множитель к сумме договора", m3(nmcAll!)]] : [["Множитель к сумме договора", m3(total.total)]]),
+    ];
     if (audience === "customer") {
       const headC = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Рост к ценам договоров ${baseYear}, базовый сценарий МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
       add("Сводка", [...headC,
         ["Показатель", "Значение"],
-        [`Средний рост цен в ${year}, %`, p1(total.total)],
-        [`Множитель к сумме закупки ${baseYear}`, m3(total.total)],
+        ...threeRows,
         ...(cpi != null ? [[`Общая инфляция, прогноз ${cpiSource}, %`, p1(cpi)]] : []),
         [],
-        ["Как применить: сумма закупки " + baseYear + " × множитель = ориентир на " + year + ". Проценты одинаковы для сумм с НДС и без НДС."],
+        ["Как применить: сумма договора " + baseYear + " × множитель = рекомендуемая НМЦ на " + year + ". Проценты одинаковы для сумм с НДС и без НДС."],
       ], [60, 14]);
-      add("Рост по категориям", [...headC, ["Категория", "Рост, %", "Множитель"], ...rateRows(cats, false)], [48, 10, 12]);
-      add("Рост по направлениям", [...headC, ["Направление", "Примеры закупок", "Рост, %", "Множитель"], ...rateRows(subjects, true)], [50, 60, 10, 12]);
+      add("НМЦ по категориям", [...headC, ["Категория", ...rateHead], ...rateRows(cats, false)], [48, 18, 20, 22, 18]);
+      add("НМЦ по направлениям", [...headC, ["Направление", "Примеры закупок", ...rateHead], ...rateRows(subjects, true)], [50, 60, 18, 20, 22, 18]);
       add("Источники", [["Источник", "Ссылка"], ...sources.map((x) => [x.name, x.url])], [70, 70]);
       const { downloadWorkbook } = await import("@/lib/excel");
       const regs = f.region.map((k) => counts.reg.get(k)?.label ?? k);
@@ -113,7 +123,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
     const head = [[`Прогноз цен ${year} — ${title}`], [`Срез: ${sliceText}. Расчёт по базовому сценарию МЭР${approved ? "" : ". Прогноз не утверждён"}`], []];
     add("Сводка", [...head,
       ["Показатель", "Значение", "Ед."],
-      [`Средний рост цен в ${year}`, p1(total.total), "%"],
+      ...threeRows.map((r) => [r[0], r[1], ""]),
       ...(cpi != null ? [[`Инфляция, прогноз ${cpiSource} на ${year}`, p1(cpi), "%"]] : []),
       ["Позиций", rows.length, "шт."],
       ["Предметов закупки", subjects.length, "шт."],
@@ -129,7 +139,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
       ["Категория", `Рост цен в ${baseYear}, п.п.`, `Рост в ${year}, п.п.`, "Итого рост, %"],
       ...cats.map((c) => [c.key || "Без категории", p1(c.intra), p1(c.industry), p1(c.total)]),
     ], [48, 18, 20, 14]);
-    add("Рост по направлениям", [...head, ["Направление", "Примеры закупок", "Рост, %", "Множитель", "Договоров", "Надёжность"], ...rateRows(subjects, true)], [50, 60, 10, 12, 12, 14]);
+    add("НМЦ по направлениям", [...head, ["Направление", "Примеры закупок", ...rateHead, "Договоров", "Надёжность"], ...rateRows(subjects, true)], [50, 60, 18, 20, 22, 18, 12, 14]);
     add("Рост по предметам (п.п.)", [...head,
       ["Предмет закупки", `Рост цен в ${baseYear}, п.п.`, `Рост в ${year}, п.п.`, "Итого рост, %"],
       ...subjects.map((g) => [g.key, p1(g.intra), p1(g.industry), p1(g.total)]),
@@ -251,7 +261,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
             {chunk(subjects, 16).map((part, i, all) => (
               <Sheet key={i}>
                 <div>
-                  <h2 className="text-xl font-semibold">Рост цен по направлениям закупок{all.length > 1 ? ` · ${i + 1} из ${all.length}` : ""}</h2>
+                  <h2 className="text-xl font-semibold">Рекомендуемая НМЦ по направлениям закупок{all.length > 1 ? ` · ${i + 1} из ${all.length}` : ""}</h2>
                   <p className="mt-0.5 text-sm" style={{ color: RC.ink2 }}>Направление — вид товаров и услуг. Под названием — примеры закупок из плана. Сверху — направления с самым большим ростом.</p>
                 </div>
                 <RateTable reserve={reserve} year={year} baseYear={baseYear} cpi={cpi} examples groups={part.map((g) => ({ key: g.key, label: g.key, total: g.total, rows: g.rows }))} />
@@ -359,15 +369,17 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
   const th = "py-1.5 pr-3 text-left text-[11px] font-medium uppercase tracking-wide";
   const td = "border-t py-1.5 pr-3";
 
+  const resCat = (cat: string) => (reserve?.overall == null ? 0 : reserve.byCat[cat] ?? reserve.overall);
+  const nmcSum = m.cats.reduce((sum, c) => sum + c.fc * (1 + resCat(c.key) / 100), 0);
   if (part === "summary") return (
     <>
       <ThreeNumbers growth={growth} reserve={reserve} year={year} baseYear={baseYear} cpi={cpi} cpiSource={cpiSource} />
       {!m.hasSums ? <p className="text-sm" style={{ color: RC.muted }}>В этой версии не сохранено количество — суммы появятся после повторной загрузки файлов ГПЗ и отчётности. Средний рост цен: {fmtPct(growth)}.</p> : <>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Kpi label={`Сумма ГПЗ ${baseYear}`} value={fmtMoney(m.base)} note="по ценам договоров, без НДС" />
-          <Kpi label={`Потребность ${year}`} value={m.cons ? <>{fmtMoney(m.fc)} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>– {fmtMoney(m.fcCons)}</small></> : fmtMoney(m.fc)}
+          <Kpi label={`Потребность ${year} по прогнозу цен`} value={m.cons ? <>{fmtMoney(m.fc)} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>– {fmtMoney(m.fcCons)}</small></> : fmtMoney(m.fc)}
             note={m.cons ? `базовый ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)} – консервативный ${fmtPct(m.base ? (m.fcCons / m.base - 1) * 100 : 0)} сценарий МЭР` : `по прогнозным ценам, ${fmtPct(m.base ? (m.fc / m.base - 1) * 100 : 0)}`} />
-          <Kpi label="Прирост" value={fmtMoney(m.fc - m.base)} note={m.partial ? "часть позиций без количества не учтена" : "при том же объёме закупок"} />
+          <Kpi label={`Бюджет по рекомендуемой НМЦ ${year}`} value={fmtMoney(nmcSum)} note={reserve?.overall != null ? `потребность + надбавка закупщиков по категориям${m.partial ? "; часть позиций без количества не учтена" : ""}` : "надбавки прошлых лет нет — равен потребности"} />
         </div>
         {plan.length > 0 && (
           <div className="rounded-lg border px-4 py-3 text-xs" style={{ borderColor: RC.line, color: RC.ink2, ...NUM }}>
@@ -380,7 +392,7 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
         <div className="grid gap-3 lg:grid-cols-2">
           <Box title="Сумма по категориям">
             <table className="w-full text-xs" style={NUM}>
-              <thead style={{ color: RC.muted }}><tr><th className={th}>Категория</th><th className={`${th} text-right`}>{baseYear}</th><th className={`${th} text-right`}>{year}</th><th className={`${th} text-right`}>Рост</th>{m.cons && <th className={`${th} text-right`}>Консерв.</th>}</tr></thead>
+              <thead style={{ color: RC.muted }}><tr><th className={th}>Категория</th><th className={`${th} text-right`}>{baseYear}</th><th className={`${th} text-right`}>{year}</th><th className={`${th} text-right`}>Рост</th>{m.cons && <th className={`${th} text-right`}>Консерв.</th>}<th className={`${th} text-right`}>НМЦ {year}</th></tr></thead>
               <tbody>{m.cats.map((c) => (
                 <tr key={c.key} style={{ borderColor: RC.line }}>
                   <td className={td} style={{ borderColor: RC.line }} title={c.key}>{shortCat(c.key)}</td>
@@ -388,6 +400,7 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
                   <td className={`${td} text-right whitespace-nowrap font-semibold`} style={{ borderColor: RC.line }}>{fmtMoney(c.fc)}</td>
                   <td className={`${td} text-right whitespace-nowrap`} style={{ borderColor: RC.line, color: RC.ink2 }}>{fmtPct(c.base ? (c.fc / c.base - 1) * 100 : 0)}</td>
                   {m.cons && <td className={`${td} text-right whitespace-nowrap`} style={{ borderColor: RC.line, color: RC.ink2 }}>{fmtMoney(c.cons)}</td>}
+                  <td className={`${td} text-right whitespace-nowrap font-semibold`} style={{ borderColor: RC.line, color: RC.violet }} title={`надбавка ${fmtPct(resCat(c.key))}`}>{fmtMoney(c.fc * (1 + resCat(c.key) / 100))}</td>
                 </tr>))}</tbody>
             </table>
           </Box>
@@ -409,16 +422,6 @@ function MoneySheet({ part, view, year, baseYear, shortCat, growth, cpi, cpiSour
   );
   return (
     <>
-      {m.nmc && (
-        <Box title="НМЦ и экономия на торгах">
-          <div className="grid gap-3 text-xs sm:grid-cols-3" style={NUM}>
-            <div><p style={{ color: RC.muted }}>НМЦ {baseYear}</p><p className="text-lg font-semibold">{fmtMoney(m.nmc.nmc)}</p></div>
-            <div><p style={{ color: RC.muted }}>Договоры {baseYear} — экономия на торгах</p><p className="text-lg font-semibold">{fmtMoney(m.nmc.contract)} <small className="text-sm font-medium" style={{ color: RC.ink2 }}>{fmtPct((m.nmc.contract / m.nmc.nmc - 1) * 100)}</small></p></div>
-            <div><p style={{ color: RC.muted }}>НМЦ {year} — от НМЦ {baseYear} с ростом цен</p><p className="text-lg font-semibold">{fmtMoney(m.nmc.nmcNext)}</p></div>
-          </div>
-          <p className="mt-2 text-xs" style={{ color: RC.ink2 }}>Цена договора — это цена после торгов. Если ставить НМЦ {year} от цены договора, в ней не будет запаса на торг; вариант «от НМЦ {baseYear}» сохраняет его. По {m.nmc.positions} {plural(m.nmc.positions, "позиции", "позициям", "позициям")}, где в отчётности есть НМЦ.</p>
-        </Box>
-      )}
     </>
   );
 }

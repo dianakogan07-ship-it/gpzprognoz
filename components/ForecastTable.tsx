@@ -1,5 +1,6 @@
 "use client";
 import Link from "next/link";
+import type { Reserve } from "@/lib/forecasts/reserve";
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { IconDownload, IconEdit, IconHelp } from "./Icons";
 import { DEFAULT_VAT } from "@/lib/logic";
@@ -7,7 +8,6 @@ import { avgGrowth } from "@/lib/report";
 import { Modal } from "./Modal";
 import { contractPrice, type ForecastRow } from "@/lib/forecast";
 
-const withVat = (r: ForecastRow) => Math.round(r.forecastPrice * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100;
 import { Chip, MultiSelect } from "./MultiSelect";
 import {
   CONTRACTS_LABEL, EMPTY_FILTERS, FLAG_LABEL, REASON_TEXT, REPEAT_LABEL, SOURCE_LABEL, STATUS_LABEL,
@@ -122,7 +122,7 @@ export function useForecastFilters() {
 export type ForecastFilters = ReturnType<typeof useForecastFilters>;
 
 /** Таблица позиций прогноза: фильтры, сортировка, раскрытие строки, выгрузка текущей выборки */
-export function ForecastTable({ view, filters, baseYear, targetYear, sources, onExport, onEdit, onReview, rowDetails, showMeta }: {
+export function ForecastTable({ view, filters, baseYear, targetYear, sources, onExport, onEdit, onReview, rowDetails, showMeta, reserve = null }: {
   view: ViewRow[];
   filters: ForecastFilters;
   baseYear: number;
@@ -133,6 +133,8 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   /** Смена статуса строки: «Проверить» / «Утверждено» */
   onReview?: (v: ViewRow, approved: boolean) => void;
   rowDetails?: (v: ViewRow) => ReactNode;
+  /** Надбавка закупщиков прошлых лет — для колонки «Рекомендуемая НМЦ» */
+  reserve?: Reserve | null;
   /** Сохранённый прогноз: фильтры по отметкам проверки и правкам */
   showMeta?: boolean;
 }) {
@@ -184,6 +186,9 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
   }, [filtered]);
   const toggleGroup = (k: string) => setExpanded((s) => { const n = new Set(s); if (n.has(k)) n.delete(k); else n.add(k); return n; });
   const allOpen = groups.length > 0 && groups.every((g) => expanded.has(g.key));
+  // Рекомендуемая НМЦ позиции: прогноз цены + надбавка её категории (или общая по ГПЗ)
+  const resOf = (r: ForecastRow) => (reserve?.overall == null ? null : reserve.byCat[r.category ?? ""] ?? reserve.overall);
+  const nmcOf = (r: ForecastRow) => r.forecastPrice * (1 + (resOf(r) ?? 0) / 100);
   const [card, setCard] = useState<ViewRow | null>(null);
   const hasMethods = counts.method.size > 1 || !counts.method.has("");
   const cols = 11;
@@ -255,7 +260,7 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                   <th>Ед.</th>
                   <SortTh k="price" f={f} set={set} right>Цена {baseYear}</SortTh>
                   <SortTh k="forecast" f={f} set={set} right>Прогноз {targetYear} без НДС</SortTh>
-                  <th className="whitespace-nowrap text-right">Прогноз {targetYear} с НДС</th>
+                  <th className="whitespace-nowrap text-right" title="Прогноз цены + надбавка закупщиков прошлых лет (по категории)">НМЦ {targetYear}</th>
                   <th>Статус</th>
                   <th />
                 </tr>
@@ -307,9 +312,9 @@ export function ForecastTable({ view, filters, baseYear, targetYear, sources, on
                               <div className="whitespace-nowrap font-semibold text-slate-900">{fmtRub(r.forecastPrice)}</div>
                               <div className={`text-xs ${v.growth < 0 ? "text-red-600" : "text-slate-400"}`}>{fmtGrowth(v.growth)}</div>
                             </td>
-                            <td className="whitespace-nowrap text-right" title={r.vatRate == null ? "Ставки НДС нет в файлах — взята 22 %" : undefined}>
-                              <div className="text-slate-900">{fmtRub(withVat(r))}</div>
-                              <div className="text-xs text-slate-400">НДС {Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %{r.vatRate == null ? "*" : ""}</div>
+                            <td className="whitespace-nowrap text-right" title={`С НДС ${Math.round((r.vatRate ?? DEFAULT_VAT) * 100)} %: ${fmtRub(Math.round(nmcOf(r) * (1 + (r.vatRate ?? DEFAULT_VAT)) * 100) / 100)}`}>
+                              <div className="font-medium text-slate-900">{fmtRub(Math.round(nmcOf(r) * 100) / 100)}</div>
+                              <div className="text-xs text-slate-400">без НДС{resOf(r) != null ? ` · надбавка ${fmtGrowth(resOf(r)!)}` : ""}</div>
                             </td>
                             <td onClick={(e) => e.stopPropagation()}><StatusPick v={v} onChange={onReview} /></td>
                             <td className="whitespace-nowrap text-right" onClick={(e) => e.stopPropagation()}>

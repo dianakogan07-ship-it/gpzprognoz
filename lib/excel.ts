@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import type { Reserve } from "./forecasts/reserve";
 import type { ForecastResult, ForecastRow } from "./forecast";
 import { REASON_TEXT, STATUS_LABEL, reasonsOf, statusOf } from "./forecastView";
 import type { PriceIndex, Source } from "./types";
@@ -8,7 +9,9 @@ import { KIND_LABEL, MONTHS, coefToPercent, keyType } from "./indexFormat";
 
 const yesNo = (b: boolean | null) => (b == null ? "не определено" : b ? "да" : "нет");
 
-export function forecastWorkbook(res: ForecastResult, sources: Source[], targetYear: number, rows: ForecastRow[] = res.rows): XLSX.WorkBook {
+export function forecastWorkbook(res: ForecastResult, sources: Source[], targetYear: number, rows: ForecastRow[] = res.rows, reserve: Reserve | null = null): XLSX.WorkBook {
+  // Надбавка закупщиков прошлых лет по категории позиции — для рекомендуемой НМЦ
+  const resOf = (r: ForecastRow) => (reserve?.overall == null ? null : reserve.byCat[r.category ?? ""] ?? reserve.overall);
   const wb = XLSX.utils.book_new();
   const main = rows.map((r) => ({
     "ОКПД2": r.okpd2,
@@ -27,6 +30,11 @@ export function forecastWorkbook(res: ForecastResult, sources: Source[], targetY
     [`Прогноз ${targetYear}, ₽ без НДС`]: r.forecastPrice,
     "Ставка НДС, %": Math.round((r.vatRate ?? 0.22) * 100),
     [`Прогноз ${targetYear}, ₽ с НДС`]: Math.round(r.forecastPrice * (1 + (r.vatRate ?? 0.22)) * 100) / 100,
+    ...(reserve?.overall != null ? {
+      "Надбавка закупщиков, %": resOf(r),
+      [`Рекомендуемая НМЦ ${targetYear}, ₽ без НДС`]: Math.round(r.forecastPrice * (1 + resOf(r)! / 100) * 100) / 100,
+      [`Рекомендуемая НМЦ ${targetYear}, ₽ с НДС`]: Math.round(r.forecastPrice * (1 + resOf(r)! / 100) * (1 + (r.vatRate ?? 0.22)) * 100) / 100,
+    } : {}),
     "Повторяющаяся": yesNo(r.repeatable),
     "Статус": STATUS_LABEL[statusOf(r)],
     "Причины": reasonsOf(r).map((x) => REASON_TEXT[x]).join("; "),

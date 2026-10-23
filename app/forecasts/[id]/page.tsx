@@ -147,7 +147,7 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
     { label: "История", onClick: () => setShowHistory(true) },
     { label: "Сравнить", onClick: () => router.push(`/forecasts/${id}/compare`) },
     { label: "Индексы версии", onClick: () => setShowIdx(true) },
-    { label: "Выгрузить в Excel", onClick: () => reference && exportRows(f.title, f.year, ver.number, data.rows, reference.sources) },
+    { label: "Выгрузить в Excel", onClick: () => reference && exportRows(f.title, f.year, ver.number, data.rows, reference.sources, "", reserve) },
     ...(!archived ? [{ label: "Новая версия", onClick: () => setNewVer(true) }] : []),
     ...(isCurrent && !archived && f.status !== "review" && f.status !== "draft"
       ? [{ label: "В архив", onClick: () => { if (confirm("Перенести прогноз в архив?")) status("archived", "Прогноз перенесён в архив"); } }] : []),
@@ -221,8 +221,8 @@ export default function ForecastPage({ params }: { params: { id: string } }) {
           prevVersion={((p) => (p ? { id: p.id, number: p.number } : null))(f.versions.find((x) => x.number === ver.number - 1))} filters={filters} reference={reference} year={f.year} baseYear={f.base_year} title={f.title}
           approved={f.status === "approved"} approvedAt={f.status === "approved" ? f.updated_at : null} reserve={reserve} />
       )}
-      {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta
-        onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор")}
+      {tab === "forecast" && <ForecastTable view={view} filters={filters} baseYear={f.base_year} targetYear={f.year} sources={reference?.sources ?? []} showMeta reserve={reserve}
+        onExport={(rows) => reference && exportRows(f.title, f.year, ver.number, rows.map((v) => v.row), reference.sources, rows.length === view.length ? "" : " отбор", reserve)}
         onEdit={editable ? setEditing : undefined}
         onReview={editable ? setReviewed : undefined}
         rowDetails={(v) => (v.meta ? <>
