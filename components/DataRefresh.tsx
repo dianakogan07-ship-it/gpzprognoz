@@ -58,7 +58,7 @@ export function CbrField({ reference, year, onDone }: { reference: Reference; ye
   const date = new Date().toLocaleDateString("ru-RU");
   return (
     <div className="space-y-2 text-sm">
-      <p className="text-slate-600">Откройте <a className="text-brand hover:underline" href="https://www.cbr.ru/statistics/ddkp/mo_br/" target="_blank" rel="noreferrer">макроэкономический опрос Банка России</a> и возьмите прогноз инфляции на {year} год (в среднем за год).{cur ? ` Сейчас в сервисе: ${formatGrowth(cur.value)}.` : ""}</p>
+      <p className="text-slate-600">Откройте <a className="text-brand hover:underline" href="https://www.cbr.ru/statistics/ddkp/mo_br/" target="_blank" rel="noreferrer">макроэкономический опрос Банка России</a> → таблица результатов → строка «Инфляция, в среднем за год», колонка {year}, медиана. Не ключевая ставка, не инфляция за месяц и не цель 4 %.{cur ? ` Сейчас в сервисе: ${formatGrowth(cur.value)}.` : ""}</p>
       <div className="flex flex-wrap items-center gap-2">
         <input className="inp w-28 py-1.5" inputMode="decimal" placeholder="например, 4,2" value={pct} onChange={(e) => setPct(e.target.value)} aria-label="Инфляция, %" />
         <span className="text-slate-500">%</span>
