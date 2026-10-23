@@ -285,7 +285,7 @@ export function ForecastReport({ audience, view, filters, reference, year, baseY
                 plan={excluded.filter((e) => e.plan && (!f.category.length || f.category.includes(e.plan.category ?? "")) && (!f.region.length || f.region.includes(e.plan.region ?? "")))} />
               <MoneySheet part="basis" view={slice} year={year} baseYear={baseYear} shortCat={shortCat} growth={total.total} cpi={cpi} cpiSource={cpiSource} />
             </Sheet>
-            <Sheet><AttentionSheet view={slice} excluded={excluded} year={year} baseYear={baseYear} /></Sheet>
+            <Sheet><AttentionSheet view={slice} excluded={excluded} year={year} baseYear={baseYear} reserve={reserve} /></Sheet>
             <FactSheet forecastId={forecastId} />
           </>}
         </div>
@@ -463,7 +463,7 @@ function FactSheet({ forecastId }: { forecastId: number }) {
 }
 
 /** Позиции, которые стоит проверить, и строки, не попавшие в расчёт — для сотрудников */
-function AttentionSheet({ view, excluded, year, baseYear }: { view: ViewRow[]; excluded: ExcludedRow[]; year: number; baseYear: number }) {
+function AttentionSheet({ view, excluded, year, baseYear, reserve = null }: { view: ViewRow[]; excluded: ExcludedRow[]; year: number; baseYear: number; reserve?: Reserve | null }) {
   const list = view.filter((v) => v.reasons.length || v.meta?.edited)
     .sort((a, b) => (sumBase(b.row) ?? b.row.forecastPrice) - (sumBase(a.row) ?? a.row.forecastPrice)).slice(0, 18);
   const groups = new Map<string, number>();
@@ -485,10 +485,15 @@ function AttentionSheet({ view, excluded, year, baseYear }: { view: ViewRow[]; e
       <div className="grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
         <Box title={`Позиции с замечаниями (${view.filter((v) => v.reasons.length || v.meta?.edited).length})`}>
           <table className="w-full text-xs" style={NUM}>
-            <thead style={{ color: RC.muted }}><tr><th className={th}>Позиция</th><th className={`${th} text-right`}>Прогноз</th><th className={th}>Почему проверить</th></tr></thead>
+            <thead style={{ color: RC.muted }}><tr><th className={th}>Позиция</th><th className={`${th} text-right`}>НМЦ {year}</th><th className={th}>Почему проверить</th></tr></thead>
             <tbody>{list.map((v) => (
               <tr key={v.id}><td className={td} style={{ borderColor: RC.line }}>{v.row.subject}<span className="block text-[10px]" style={{ color: RC.muted }}>{v.row.regionName ? shortRegion(v.row.regionName) : ""} · {v.row.unitLabel}</span></td>
-                <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{rubShort(v.row.forecastPrice)}</td>
+                <td className={`${td} whitespace-nowrap text-right`} style={{ borderColor: RC.line }}>{(() => {
+                  // Рекомендуемая НМЦ по позиции: сумма, если есть количество, иначе — за единицу
+                  const k = 1 + (reserve?.overall == null ? 0 : reserve.byCat[v.row.category ?? ""] ?? reserve.overall) / 100;
+                  const sum = sumForecast(v.row);
+                  return sum != null ? fmtMoney(sum * k) : <>{rubShort(v.row.forecastPrice * k)}<span className="block text-[10px]" style={{ color: RC.muted }}>за {v.row.unitLabel}</span></>;
+                })()}</td>
                 <td className={td} style={{ borderColor: RC.line, color: RC.ink2 }}>{[...v.reasons.map((r) => REASON_SHORT[r]), ...(v.meta?.edited ? ["цена изменена вручную"] : [])].join("; ")}</td></tr>
             ))}</tbody>
           </table>
